@@ -1,5 +1,6 @@
 #include <furi.h>
 #include <furi_hal.h>
+#include <furi_hal_rtc.h>
 
 #include <gui/gui.h>
 #include <input/input.h>
@@ -8,6 +9,13 @@
 #include <notification/notification_messages.h>
 
 #include "clock.h"
+
+// Seconds since local midnight, per the Flipper's real-time clock.
+static uint32_t rtc_now_seconds(void) {
+    DateTime dt;
+    furi_hal_rtc_get_datetime(&dt);
+    return (uint32_t)dt.hour * 3600 + (uint32_t)dt.minute * 60 + dt.second;
+}
 
 #define CFG_FILENAME APP_DATA_PATH("timer.cfg")
 
@@ -42,6 +50,7 @@ typedef struct {
     bool running;
     bool has_been_started;
     uint32_t start_tick;
+    uint32_t start_wallclock_secs; // Real time-of-day when the current shift began
     uint32_t elapsed_seconds;
     uint16_t ms_adjust;
     bool fill_enabled; // Toggle for segment fill visibility
@@ -113,7 +122,9 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         ms,
         app->running,
         app->has_been_started,
-        app->fill_enabled);
+        app->fill_enabled,
+        rtc_now_seconds(),
+        app->start_wallclock_secs);
     furi_mutex_release(app->mutex);
 }
 
@@ -255,6 +266,7 @@ int32_t clock_main(void* p) {
     app->has_been_started = false;
     app->elapsed_seconds = 0;
     app->start_tick = 0;
+    app->start_wallclock_secs = 0;
     app->ms_adjust = 0;
     app->finish_sound_played = false;
     app->skip_left_press_tick = 0;
@@ -268,14 +280,13 @@ int32_t clock_main(void* p) {
 
     if(!cfg_load(file, app)) {
         init_timer_config(&app->cfg);
-        calc_clock_face(&app->cfg, &app->face);
         app->fill_enabled = app->cfg.fill_enabled; // Sync from config
         cfg_save(file, app);
     } else {
-        // Calculate face from loaded timer_duration_hours
-        calc_clock_face(&app->cfg, &app->face);
         app->fill_enabled = app->cfg.fill_enabled; // Load fill_enabled from config
     }
+    // The dial is a fixed 12-hour clock face, independent of shift duration
+    calc_clock_face(&app->face);
 
     ViewPort* view_port = view_port_alloc();
     FuriMessageQueue* event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
@@ -368,17 +379,9 @@ int32_t clock_main(void* p) {
             furi_mutex_release(app->mutex);
         }
 
-        // Adaptive timeout based on timer state for battery optimization
-        // When not running, we can wait longer since we're not updating display
+        // The dial always shows real time (and, once started, a growing pause gap), so it must
+        // keep ticking once a second regardless of running state - no idle timeout to save on.
         uint32_t queue_timeout = FRAME_MS_RUNNING;
-        if(furi_mutex_acquire(app->mutex, 0) == FuriStatusOk) {
-            if(!app->running) {
-                // When paused/finished, wait longer for input (saves CPU cycles)
-                queue_timeout =
-                    5000; // 5 seconds - long enough to save battery, short enough to be responsive
-            }
-            furi_mutex_release(app->mutex);
-        }
 
         if(furi_message_queue_get(event_queue, &event, queue_timeout) == FuriStatusOk) {
             // Handle long press for Back button to exit
@@ -392,6 +395,7 @@ int32_t clock_main(void* p) {
                     app->elapsed_seconds = 0;
                     app->ms_adjust = 0;
                     app->start_tick = 0;
+                    app->start_wallclock_secs = 0;
                     app->finish_sound_played = false;
                     furi_mutex_release(app->mutex);
                 }
@@ -403,7 +407,6 @@ int32_t clock_main(void* p) {
                         if(!app->has_been_started) {
                             // Set mode: change timer duration
                             modify_timer_up(&app->cfg);
-                            calc_clock_face(&app->cfg, &app->face);
                             cfg_save_internal(file, &app->cfg);
                         } else {
                             // Non-set mode: toggle fill visibility
@@ -420,7 +423,6 @@ int32_t clock_main(void* p) {
                         if(!app->has_been_started) {
                             // Set mode: change timer duration
                             modify_timer_down(&app->cfg);
-                            calc_clock_face(&app->cfg, &app->face);
                             cfg_save_internal(file, &app->cfg);
                         } else {
                             // Non-set mode: toggle fill visibility
@@ -454,6 +456,7 @@ int32_t clock_main(void* p) {
                                 app->elapsed_seconds = 0;
                                 app->ms_adjust = 0;
                                 app->start_tick = 0;
+                                app->start_wallclock_secs = 0;
                                 app->finish_sound_played = false;
                                 app->last_hour_played = 0;
                             } else if(app->running) {
@@ -463,6 +466,11 @@ int32_t clock_main(void* p) {
                                 app->ms_adjust = elapsed_ms % 1000; // Store remaining milliseconds
                                 app->running = false;
                             } else {
+                                // Record the real shift-start time only on the very first start;
+                                // resuming after a pause keeps the original anchor on the dial.
+                                if(!app->has_been_started) {
+                                    app->start_wallclock_secs = rtc_now_seconds();
+                                }
                                 // Start timer - adjust start_tick to account for stored milliseconds
                                 app->has_been_started = true;
                                 // Subtract stored milliseconds from start_tick so timer continues from where it paused
@@ -588,26 +596,15 @@ int32_t clock_main(void* p) {
             // Force update after input events (user interaction requires immediate feedback)
             view_port_update(view_port);
         } else {
-            // Battery optimization: Only update when timer is running
-            // When paused/finished, display is static - no need to redraw
-            bool needs_update = false;
+            // The real-time hand (and, while paused, the growing gap) needs to tick every
+            // second no matter the timer state - this app can no longer go fully idle.
+            static uint32_t last_update = 0;
+            uint32_t now = furi_get_tick();
 
-            if(furi_mutex_acquire(app->mutex, 0) == FuriStatusOk) {
-                needs_update = app->running; // Only update when timer is actively running
-                furi_mutex_release(app->mutex);
+            if((now - last_update) >= FRAME_MS_RUNNING) {
+                view_port_update(view_port);
+                last_update = now;
             }
-
-            if(needs_update) {
-                // Timer is running - update at reduced frequency
-                static uint32_t last_update = 0;
-                uint32_t now = furi_get_tick();
-
-                if((now - last_update) >= FRAME_MS_RUNNING) {
-                    view_port_update(view_port);
-                    last_update = now;
-                }
-            }
-            // When paused/finished: no viewport update = zero battery drain for display
         }
     }
 

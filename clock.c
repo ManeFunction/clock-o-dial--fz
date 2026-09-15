@@ -6,7 +6,6 @@
 #define M_TWOPI (2.0 * M_PI)
 #endif
 #define M_TWOPI_F ((float)(2.0 * M_PI))
-#define M_PI_2_F  ((float)(M_PI / 2.0))
 
 #define OFS_LEFT_X  31
 #define OFS_MID_X   63
@@ -84,248 +83,71 @@ void draw_hand(Canvas* canvas, uint8_t ofs_x, float ang, int radius, bool thick)
     }
 }
 
-void calc_clock_face(TimerConfig* cfg, ClockFace* face) {
-    // Square face (width = height = FACE_RADIUS)
+// Finds where a ray at angle `ang` (from center, clockwise from top) exits the square face.
+static void square_intersect(float ang, uint8_t width, uint8_t height, float ofs, Point* out) {
+    float dir_x = sinf(ang);
+    float dir_y = cosf(ang);
+
+    float scale_x = (fabsf(dir_x) > 0.001f) ? (float)width / fabsf(dir_x) : width + height;
+    float scale_y = (fabsf(dir_y) > 0.001f) ? (float)height / fabsf(dir_y) : width + height;
+    float scale = (scale_x < scale_y) ? scale_x : scale_y;
+    scale -= ofs;
+    if(scale < 0) scale = 0;
+
+    float max_x = width - ofs;
+    float max_y = height - ofs;
+    float x = dir_x * scale;
+    float y = dir_y * scale;
+    if(x > max_x) x = max_x;
+    if(x < -max_x) x = -max_x;
+    if(y > max_y) y = max_y;
+    if(y < -max_y) y = -max_y;
+
+    out->x = (int8_t)roundf(x);
+    out->y = (int8_t)roundf(y);
+}
+
+void calc_clock_face(ClockFace* face) {
+    // Square face representing a real 12-hour clock (width = height = FACE_RADIUS)
     uint8_t width = FACE_RADIUS;
     uint8_t height = FACE_RADIUS;
 
     float short_ofs = 2.0;
     float long_ofs = 7.0;
-    float hour_ofs = 12.5;
 
-    uint8_t num_hours = cfg->timer_duration_hours;
-    if(num_hours < 1) num_hours = 1;
-    if(num_hours > MAX_TIMER_HOURS) num_hours = MAX_TIMER_HOURS;
-
-    // Create hour marks based on timer duration (every M_TWOPI / num_hours degrees)
-    // Start at top (0 degrees) and go clockwise
-    float hour_angle_step = (float)M_TWOPI / (float)num_hours;
-
-    // Create hour mark lines (long marks) and label positions
-    for(uint8_t hour = 0; hour < num_hours; hour++) {
-        float ang = (float)hour * hour_angle_step;
-
-        // Normalize angle to [0, 2π)
-        while(ang >= (float)M_TWOPI)
-            ang -= (float)M_TWOPI;
-        while(ang < 0.0f)
-            ang += (float)M_TWOPI;
-
-        // Handle special cases for cardinal directions
-        // Use a wider tolerance to catch angles that are exactly 90°, 180°, 270° when divisible by 4
-        bool is_top = (ang < 0.02f || ang > (float)M_TWOPI - 0.02f);
-        bool is_right = (ang > (float)M_PI_2 - 0.05f && ang < (float)M_PI_2 + 0.05f);
-        bool is_bottom = (ang > (float)M_PI - 0.05f && ang < (float)M_PI + 0.05f);
-        bool is_left =
-            (ang > (float)(3.0 * M_PI_2) - 0.05f && ang < (float)(3.0 * M_PI_2) + 0.05f);
-
-        if(is_top) {
-            // Top (0°)
-            face->hour_marks[hour].start.x = 0;
-            face->hour_marks[hour].start.y = height;
-            face->hour_marks[hour].end.x = 0;
-            face->hour_marks[hour].end.y = height - long_ofs;
-            face->hours[hour].x = 0;
-            face->hours[hour].y = height - hour_ofs;
-        } else if(is_right) {
-            // Right (90°)
-            face->hour_marks[hour].start.x = width;
-            face->hour_marks[hour].start.y = 0;
-            face->hour_marks[hour].end.x = width - long_ofs;
-            face->hour_marks[hour].end.y = 0;
-            face->hours[hour].x = width - hour_ofs;
-            face->hours[hour].y = 0;
-        } else if(is_bottom) {
-            // Bottom (180°)
-            face->hour_marks[hour].start.x = 0;
-            face->hour_marks[hour].start.y = -height;
-            face->hour_marks[hour].end.x = 0;
-            face->hour_marks[hour].end.y = -(height - long_ofs);
-            face->hours[hour].x = 0;
-            face->hours[hour].y = -(height - hour_ofs);
-        } else if(is_left) {
-            // Left (270°)
-            face->hour_marks[hour].start.x = -width;
-            face->hour_marks[hour].start.y = 0;
-            face->hour_marks[hour].end.x = -(width - long_ofs);
-            face->hour_marks[hour].end.y = 0;
-            face->hours[hour].x = -(width - hour_ofs);
-            face->hours[hour].y = 0;
-        } else {
-            // Check if angle is very close to 90° or 270° - handle specially to avoid issues
-            float ang_mod = fmodf(ang, (float)M_PI_2);
-            bool near_90_or_270 = (ang_mod < 0.05f || ang_mod > (float)M_PI_2 - 0.05f);
-
-            if(near_90_or_270 && (ang > (float)M_PI_2 - 0.1f && ang < (float)M_PI_2 + 0.1f)) {
-                // Very close to 90° - handle directly as horizontal line to the right
-                face->hour_marks[hour].start.x = width;
-                face->hour_marks[hour].start.y = 0;
-                face->hour_marks[hour].end.x = width - long_ofs;
-                face->hour_marks[hour].end.y = 0;
-                face->hours[hour].x = width - hour_ofs;
-                face->hours[hour].y = 0;
-            } else if(
-                near_90_or_270 &&
-                (ang > (float)(3.0 * M_PI_2) - 0.1f && ang < (float)(3.0 * M_PI_2) + 0.1f)) {
-                // Very close to 270° - handle directly as horizontal line to the left
-                face->hour_marks[hour].start.x = -width;
-                face->hour_marks[hour].start.y = 0;
-                face->hour_marks[hour].end.x = -(width - long_ofs);
-                face->hour_marks[hour].end.y = 0;
-                face->hours[hour].x = -(width - hour_ofs);
-                face->hours[hour].y = 0;
-            } else {
-                // Calculate intersection with square face for any angle
-                // Use set_point to get direction, then scale to fit square
-                float sin_a = sinf(ang);
-                float cos_a = cosf(ang);
-
-                // Get a point on unit circle in the direction of the angle
-                float dir_x = sin_a;
-                float dir_y = cos_a;
-
-                // Calculate scale factor to fit square (find which edge is hit first)
-                float scale_x = (dir_x > 0.001f || dir_x < -0.001f) ? (float)width / fabsf(dir_x) :
-                                                                      width + height;
-                float scale_y = (dir_y > 0.001f || dir_y < -0.001f) ?
-                                    (float)height / fabsf(dir_y) :
-                                    width + height;
-                float scale = (scale_x < scale_y) ? scale_x : scale_y;
-
-                // Calculate start point (at edge of square)
-                Point start_p;
-                start_p.x = (int8_t)round((double)(dir_x * scale));
-                start_p.y = (int8_t)round((double)(dir_y * scale));
-
-                // Calculate end point (at edge minus long_ofs)
-                float scale_end = scale - long_ofs;
-                if(scale_end < 0) scale_end = 0;
-                Point end_p;
-                end_p.x = (int8_t)round((double)(dir_x * scale_end));
-                end_p.y = (int8_t)round((double)(dir_y * scale_end));
-
-                // Clamp end point to square bounds minus long_ofs
-                int8_t max_x = width - long_ofs;
-                int8_t max_y = height - long_ofs;
-                if(end_p.x > max_x) end_p.x = max_x;
-                if(end_p.x < -max_x) end_p.x = -max_x;
-                if(end_p.y > max_y) end_p.y = max_y;
-                if(end_p.y < -max_y) end_p.y = -max_y;
-
-                // Calculate hour label position (at edge minus hour_ofs)
-                float scale_hour = scale - hour_ofs;
-                if(scale_hour < 0) scale_hour = 0;
-                Point hour_p;
-                hour_p.x = (int8_t)round((double)(dir_x * scale_hour));
-                hour_p.y = (int8_t)round((double)(dir_y * scale_hour));
-
-                // Clamp hour point to square bounds minus hour_ofs
-                int8_t max_x_hour = width - hour_ofs;
-                int8_t max_y_hour = height - hour_ofs;
-                if(hour_p.x > max_x_hour) hour_p.x = max_x_hour;
-                if(hour_p.x < -max_x_hour) hour_p.x = -max_x_hour;
-                if(hour_p.y > max_y_hour) hour_p.y = max_y_hour;
-                if(hour_p.y < -max_y_hour) hour_p.y = -max_y_hour;
-
-                face->hour_marks[hour].start = start_p;
-                face->hour_marks[hour].end = end_p;
-                face->hours[hour] = hour_p;
-            }
-        }
-    }
-
-    // Initialize all minute marks to zero
-    for(uint8_t i = 0; i < 60; i++) {
-        face->minutes[i].start.x = 0;
-        face->minutes[i].start.y = 0;
-        face->minutes[i].end.x = 0;
-        face->minutes[i].end.y = 0;
-    }
-
-    // Create minute marks dynamically between hour marks
-    // Keep the same total number of marks as 8 hours (8 * 4 = 32 marks)
-    // Scale marks per interval inversely with number of hours to maintain consistent density
-    // Special cases: 1 hour = 60 marks, 2 hours = double the normal amount
-    uint8_t marks_per_hour_interval;
-
-    if(num_hours == 1) {
-        // 1 hour: 60 marks total (60 marks per interval)
-        marks_per_hour_interval = 60;
-    } else if(num_hours == 2) {
-        // 2 hours: between 1 hour (60) and 3 hours (~33), use 24 marks per interval (48 total)
-        marks_per_hour_interval = 24;
-    } else {
-        // For 3+ hours: use the standard calculation
-        const uint8_t base_hours = 8;
-        const uint8_t base_marks_per_interval = 4;
-        const uint16_t target_total_marks = base_hours * base_marks_per_interval; // 32 marks
-
-        // Calculate marks per interval to maintain similar total count
-        // Use rounding for better distribution (e.g., 32/12 ≈ 2.67 → 3 marks)
-        marks_per_hour_interval = (uint8_t)roundf((float)target_total_marks / (float)num_hours);
-        if(marks_per_hour_interval < 1)
-            marks_per_hour_interval = 1; // At least 1 mark per interval
-        if(marks_per_hour_interval > 10) marks_per_hour_interval = 10; // Cap at reasonable maximum
-    }
+    float hour_angle_step = (float)M_TWOPI / (float)CLOCK_HOURS;
+    const uint8_t minor_ticks_per_hour = 4; // + the hour mark itself = 5 ticks/hour (every 5 min)
+    float minute_angle_step = hour_angle_step / (float)(minor_ticks_per_hour + 1);
 
     uint8_t minute_mark_index = 0;
-    float hour_ang_step = (float)M_TWOPI / (float)num_hours;
-    float minute_ang_step =
-        hour_ang_step / (float)(marks_per_hour_interval + 1); // +1 to skip hour mark position
+    for(uint8_t hour = 0; hour < CLOCK_HOURS; hour++) {
+        float hour_ang = (float)hour * hour_angle_step;
 
-    for(uint8_t hour = 0; hour < num_hours && minute_mark_index < 60; hour++) {
-        float hour_ang = (float)hour * hour_ang_step;
+        square_intersect(hour_ang, width, height, 0, &face->hour_marks[hour].start);
+        square_intersect(hour_ang, width, height, long_ofs, &face->hour_marks[hour].end);
 
-        // Place minute marks between this hour and the next
-        for(uint8_t m = 1; m <= marks_per_hour_interval && minute_mark_index < 60; m++) {
-            float min_ang = hour_ang + (float)m * minute_ang_step;
-
-            // Normalize angle to [0, 2π)
-            while(min_ang >= (float)M_TWOPI)
-                min_ang -= (float)M_TWOPI;
-            while(min_ang < 0.0f)
-                min_ang += (float)M_TWOPI;
-
-            // Calculate intersection with square face using the same method as hour marks
-            float sin_a = sinf(min_ang);
-            float cos_a = cosf(min_ang);
-
-            // Get a point on unit circle in the direction of the angle
-            float dir_x = sin_a;
-            float dir_y = cos_a;
-
-            // Calculate scale factor to fit square (find which edge is hit first)
-            float scale_x = (dir_x > 0.001f || dir_x < -0.001f) ? (float)width / fabsf(dir_x) :
-                                                                  width + height;
-            float scale_y = (dir_y > 0.001f || dir_y < -0.001f) ? (float)height / fabsf(dir_y) :
-                                                                  width + height;
-            float scale = (scale_x < scale_y) ? scale_x : scale_y;
-
-            // Calculate start point (at edge of square)
-            Point start_p;
-            start_p.x = (int8_t)round((double)(dir_x * scale));
-            start_p.y = (int8_t)round((double)(dir_y * scale));
-
-            // Calculate end point (at edge minus short_ofs)
-            float scale_end = scale - short_ofs;
-            if(scale_end < 0) scale_end = 0;
-            Point end_p;
-            end_p.x = (int8_t)round((double)(dir_x * scale_end));
-            end_p.y = (int8_t)round((double)(dir_y * scale_end));
-
-            // Clamp end point to square bounds minus short_ofs
-            int8_t max_x = width - short_ofs;
-            int8_t max_y = height - short_ofs;
-            if(end_p.x > max_x) end_p.x = max_x;
-            if(end_p.x < -max_x) end_p.x = -max_x;
-            if(end_p.y > max_y) end_p.y = max_y;
-            if(end_p.y < -max_y) end_p.y = -max_y;
-
-            face->minutes[minute_mark_index].start = start_p;
-            face->minutes[minute_mark_index].end = end_p;
+        for(uint8_t m = 1; m <= minor_ticks_per_hour; m++) {
+            float min_ang = hour_ang + (float)m * minute_angle_step;
+            square_intersect(min_ang, width, height, 0, &face->minutes[minute_mark_index].start);
+            square_intersect(
+                min_ang, width, height, short_ofs, &face->minutes[minute_mark_index].end);
             minute_mark_index++;
         }
     }
+}
+
+// Angle (radians, clockwise from top) for a point in time within a repeating 12-hour dial.
+static float wallclock_angle(uint32_t seconds_of_day) {
+    return fmodf((float)seconds_of_day, 12.0f * 3600.0f) / (12.0f * 3600.0f) * M_TWOPI_F;
+}
+
+// True if the forward sweep of `length` radians starting at `start` (clockwise) covers `angle`.
+// A length >= 2*PI (an arc that has lapped the dial) covers every angle.
+static bool angle_in_forward_arc(float angle, float start, float length) {
+    if(length <= 0.0f) return false;
+    float delta = fmodf(angle - start, M_TWOPI_F);
+    if(delta < 0.0f) delta += M_TWOPI_F;
+    return delta < length;
 }
 
 void draw_timer(
@@ -336,123 +158,72 @@ void draw_timer(
     uint16_t ms,
     bool running,
     bool has_been_started,
-    bool fill_enabled) {
-    // Draw square clock face on left side with variable hour marks
+    bool fill_enabled,
+    uint32_t now_wallclock_secs,
+    uint32_t start_wallclock_secs) {
+    // Draw square 12-hour clock face on left side, real time always
     static char time_buf[10];
 
-    // Calculate timer progress (0.0 to 1.0)
     uint32_t timer_duration_seconds = timer_duration_hours * 3600;
     uint32_t timer_duration_ms = timer_duration_seconds * 1000;
-    float total_ms = elapsed_seconds * 1000.0f + ms;
-    float progress = total_ms / (float)timer_duration_ms;
-    if(progress > 1.0f) progress = 1.0f;
-    float hand_angle = progress * M_TWOPI_F; // Start at 0 (top), go clockwise
 
-    // Draw filled black segment using optimized scanlines (every 2 pixels)
-    // Only draw if timer has been started, has progress, and fill is enabled
-    if(has_been_started && progress > 0.0f && fill_enabled) {
-        // Reduce fill area by 4 pixels on each side to avoid covering marks
+    // The hand always shows the real current time - one hand, no exceptions.
+    float hand_angle = wallclock_angle(now_wallclock_secs);
+
+    if(has_been_started && fill_enabled) {
+        // Worked segment: from shift start to how much has actually been worked (pauses excluded).
+        float worked_start_angle = wallclock_angle(start_wallclock_secs);
+        float worked_length = ((float)elapsed_seconds + ms / 1000.0f) / (12.0f * 3600.0f) *
+                               M_TWOPI_F;
+
+        // Predicted segment: from now, for however much work remains at the current pace.
+        // While paused this starts sliding forward with real time (a gap opens up between the
+        // worked segment and it), which pushes the predicted finish time forward too.
+        uint32_t remaining_seconds =
+            timer_duration_seconds > elapsed_seconds ? timer_duration_seconds - elapsed_seconds :
+                                                        0;
+        float predicted_start_angle = hand_angle;
+        float predicted_length = (float)remaining_seconds / (12.0f * 3600.0f) * M_TWOPI_F;
+
+        // Reduce fill area by a margin to avoid covering the tick marks
         uint8_t fill_margin = 5;
-        uint8_t width = FACE_RADIUS - fill_margin;
-        uint8_t height = FACE_RADIUS - fill_margin;
+        int8_t width = FACE_RADIUS - fill_margin;
+        int8_t height = FACE_RADIUS - fill_margin;
 
-        // Draw diagonal scanlines at 45 degrees (from top-left to bottom-right)
-        // Iterate along diagonal lines where x + y = constant
-        // We'll iterate along the sum (x + y) from -2*width to 2*width, every 2 units
-        int16_t min_sum = -(int16_t)width - (int16_t)height;
-        int16_t max_sum = (int16_t)width + (int16_t)height;
-
-        for(int16_t sum = min_sum; sum <= max_sum; sum += 2) {
-            // For diagonal line x + y = sum, find intersection with square and sector
-            // Iterate along this diagonal line
-            int8_t start_x = -width;
-            int8_t end_x = width;
-
-            // Clamp to square bounds: x + y = sum, so y = sum - x
-            // y must be between -height and height
-            if(sum - start_x > height) start_x = sum - height;
-            if(sum - start_x < -height) start_x = sum + height;
-            if(sum - end_x < -height) end_x = sum + height;
-            if(sum - end_x > height) end_x = sum - height;
-
-            // Draw pixels along this diagonal that are within the sector
-            // We need to check each pixel individually because the sector boundary is curved
-            for(int8_t x = start_x; x <= end_x; x++) {
-                int8_t y = sum - x;
-
-                // Check if pixel is within square bounds
+        for(int8_t y = -height; y <= height; y++) {
+            for(int8_t x = -width; x <= width; x++) {
                 if(abs(x) > width || abs(y) > height) continue;
 
-                // Calculate pixel angle
+                // Worked pattern: dense 45-degree checkerboard (half the pixels)
+                bool worked_dither = ((x + y) & 1) == 0;
+                if(!worked_dither) continue; // never eligible for either pattern
+
                 float pixel_angle = atan2f((float)x, (float)y);
                 if(pixel_angle < 0.0f) pixel_angle += M_TWOPI_F;
 
-                // Check if pixel is within the elapsed time sector
-                // Sector goes from 0 (top) clockwise to hand_angle
-                bool should_fill = (pixel_angle >= 0.0f && pixel_angle <= hand_angle);
-
-                if(should_fill) {
+                if(angle_in_forward_arc(pixel_angle, worked_start_angle, worked_length)) {
                     canvas_draw_dot(canvas, OFS_LEFT_X + x, OFS_Y - y);
+                } else if(angle_in_forward_arc(pixel_angle, predicted_start_angle, predicted_length)) {
+                    // Predicted pattern: sparse grid dither (a quarter of the pixels) - lets more
+                    // light through than the worked pattern, since this time hasn't happened yet.
+                    bool predicted_dither = ((x & 1) == 0) && ((y & 1) == 0);
+                    if(predicted_dither) canvas_draw_dot(canvas, OFS_LEFT_X + x, OFS_Y - y);
                 }
             }
         }
     }
 
-    // Draw minute marks (short marks) - skip marks that would create center lines
-    for(uint8_t i = 0; i < 60; i++) {
-        if(face->minutes[i].start.x != 0 || face->minutes[i].start.y != 0 ||
-           face->minutes[i].end.x != 0 || face->minutes[i].end.y != 0) {
-            // Skip marks that are too close to center (would create unwanted lines)
-            int16_t start_dist = abs(face->minutes[i].start.x) + abs(face->minutes[i].start.y);
-            int16_t end_dist = abs(face->minutes[i].end.x) + abs(face->minutes[i].end.y);
-            if(start_dist > 2 && end_dist > 2) { // Only draw if both points are away from center
-                draw_line(canvas, OFS_LEFT_X, &face->minutes[i], Normal);
-            }
-        }
+    // Draw minute marks (short ticks)
+    for(uint8_t i = 0; i < CLOCK_HOURS * 4; i++) {
+        draw_line(canvas, OFS_LEFT_X, &face->minutes[i], Normal);
     }
 
-    // Draw hour marks (long marks) - skip marks that would create center lines
-    // timer_duration_hours is already validated in calc_clock_face, so we can trust it
-    for(uint8_t i = 0; i < timer_duration_hours; i++) {
-        // Skip marks that are too close to center or have invalid coordinates
-        int16_t start_dist = abs(face->hour_marks[i].start.x) + abs(face->hour_marks[i].start.y);
-        int16_t end_dist = abs(face->hour_marks[i].end.x) + abs(face->hour_marks[i].end.y);
-
-        // Check if this is a horizontal line at y=0 (90° or 270° mark)
-        bool is_horizontal =
-            (abs(face->hour_marks[i].start.y) <= 1 && abs(face->hour_marks[i].end.y) <= 1);
-
-        // For horizontal lines, ensure start point is at the edge, not near center
-        // This prevents drawing lines that extend from center outward
-        if(is_horizontal) {
-            // Start point must be at or very close to the edge (width or -width)
-            if(abs(face->hour_marks[i].start.x) < FACE_RADIUS - 2) {
-                // Start point is too close to center, skip this mark
-                continue;
-            }
-            // Also ensure end point is closer to center than start point
-            if(abs(face->hour_marks[i].end.x) >= abs(face->hour_marks[i].start.x)) {
-                // End point is not closer to center, skip this mark
-                continue;
-            }
-        }
-
-        // Skip if line passes through or near center
-        bool passes_through_center =
-            ((face->hour_marks[i].start.x >= 0 && face->hour_marks[i].end.x <= 0) ||
-             (face->hour_marks[i].start.x <= 0 && face->hour_marks[i].end.x >= 0)) &&
-            ((face->hour_marks[i].start.y >= 0 && face->hour_marks[i].end.y <= 0) ||
-             (face->hour_marks[i].start.y <= 0 && face->hour_marks[i].end.y >= 0));
-
-        // Only draw if both points are away from center AND line doesn't pass through center
-        if(start_dist > 2 && end_dist > 2 && !passes_through_center) {
-            draw_line(canvas, OFS_LEFT_X, &face->hour_marks[i], Normal);
-        }
+    // Draw hour marks (long ticks)
+    for(uint8_t i = 0; i < CLOCK_HOURS; i++) {
+        draw_line(canvas, OFS_LEFT_X, &face->hour_marks[i], Normal);
     }
 
-    // Hour labels are permanently hidden (removed digits feature)
-
-    // Draw minutes hand showing timer progress (always draw, even in Set mode)
+    // Draw the single hand - always real time, never removed or duplicated
     draw_hand(canvas, OFS_LEFT_X, hand_angle, M_RAD, true);
 
     canvas_draw_disc(canvas, OFS_LEFT_X, OFS_Y, 2);
@@ -475,7 +246,7 @@ void draw_timer(
     const char* status;
     if(!has_been_started) {
         status = "Set";
-    } else if(progress >= 1.0f) {
+    } else if(total_elapsed_ms >= timer_duration_ms) {
         status = "Finished";
     } else if(running) {
         status = "Working";

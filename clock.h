@@ -4,7 +4,8 @@
 
 #define OFS_LEFT_X          31
 #define FACE_RADIUS         31
-#define MAX_TIMER_HOURS     24
+#define CLOCK_HOURS         12 // Dial is always a real 12-hour clock face
+#define MAX_TIMER_HOURS     24 // Max configurable shift length, in hours
 #define DEFAULT_TIMER_HOURS 8
 
 typedef enum {
@@ -26,9 +27,8 @@ typedef struct {
 } Line;
 
 typedef struct {
-    Line minutes[60];
-    Line hour_marks[MAX_TIMER_HOURS]; // Variable hour marks (1-24 hours)
-    Point hours[MAX_TIMER_HOURS]; // Variable hour label positions
+    Line minutes[CLOCK_HOURS * 4]; // 4 minor ticks between each hour mark (every 5 minutes)
+    Line hour_marks[CLOCK_HOURS];
 } ClockFace;
 
 #define CONFIG_VERSION 8
@@ -38,7 +38,7 @@ typedef struct {
     bool fill_enabled; // Fill rendering enabled/disabled
 } TimerConfig;
 
-void calc_clock_face(TimerConfig* cfg, ClockFace* face);
+void calc_clock_face(ClockFace* face);
 void draw_timer(
     Canvas* canvas,
     ClockFace* face,
@@ -47,7 +47,9 @@ void draw_timer(
     uint16_t ms,
     bool running,
     bool has_been_started,
-    bool fill_enabled);
+    bool fill_enabled,
+    uint32_t now_wallclock_secs,
+    uint32_t start_wallclock_secs);
 
 void init_timer_config(TimerConfig* cfg);
 void modify_timer_up(TimerConfig* cfg);
