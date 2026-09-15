@@ -1,0 +1,14 @@
+App(
+    appid="crock_o_dail",
+    name="Crock'o'Dail",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="clock_main",
+    requires=["gui"],
+    stack_size=1 * 1024,
+    fap_icon="icons/app_10x10.png",
+    fap_category="Tools",
+    fap_author="Mane Function",
+    fap_weburl="",
+    fap_version="1.0",
+    fap_description="DO NOT OVERTIME. NOT ANYMORE!",
+)
