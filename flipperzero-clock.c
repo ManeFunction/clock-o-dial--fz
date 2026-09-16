@@ -537,6 +537,8 @@ int32_t clock_main(void* p) {
                             app->ms_adjust = 0;
                             app->start_tick = 0;
                             app->start_wallclock_secs = 0;
+                            app->pause_start_tick = 0;
+                            app->pause_start_wallclock = 0;
                             app->break_count = 0;
                             app->finish_sound_played = false;
                             app->ok_hold_triggered = true;
@@ -594,17 +596,28 @@ int32_t clock_main(void* p) {
                                 app->ms_adjust = 0;
                                 app->start_tick = 0;
                                 app->start_wallclock_secs = 0;
+                                app->pause_start_tick = 0;
+                                app->pause_start_wallclock = 0;
                                 app->break_count = 0;
                                 app->finish_sound_played = false;
                                 app->last_hour_played = 0;
                             } else if(app->running) {
                                 // Stop timer - accumulate elapsed time including milliseconds
                                 uint32_t elapsed_ms = now_tick - app->start_tick;
-                                app->elapsed_seconds += (elapsed_ms / 1000);
-                                app->ms_adjust = elapsed_ms % 1000; // Store remaining milliseconds
                                 app->running = false;
-                                app->pause_start_tick = now_tick;
-                                app->pause_start_wallclock = rtc_now_seconds();
+
+                                if(app->pause_start_tick != 0 && elapsed_ms < BREAK_FOLD_MS) {
+                                    // Too little work happened since the last break to count as
+                                    // splitting it into two - stay anchored to that same break
+                                    // (pause_start_tick/wallclock untouched) instead of crediting
+                                    // this sliver as work, same threshold as folding a break.
+                                } else {
+                                    app->elapsed_seconds += (elapsed_ms / 1000);
+                                    app->ms_adjust =
+                                        elapsed_ms % 1000; // Store remaining milliseconds
+                                    app->pause_start_tick = now_tick;
+                                    app->pause_start_wallclock = rtc_now_seconds();
+                                }
                             } else {
                                 bool is_resume = app->has_been_started;
                                 if(!is_resume) {
