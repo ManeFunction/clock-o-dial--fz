@@ -1,6 +1,6 @@
 App(
-    appid="crock_o_dial",
-    name="Crock'o'Dial",
+    appid="clock_o_dial",
+    name="Clock'o'Dial",
     apptype=FlipperAppType.EXTERNAL,
     entry_point="clock_main",
     requires=["gui"],

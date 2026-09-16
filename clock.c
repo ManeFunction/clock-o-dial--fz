@@ -1,7 +1,7 @@
 #include <math.h>
 
 #include "clock.h"
-#include "crock_o_dial_icons.h"
+#include "clock_o_dial_icons.h"
 
 #ifndef M_TWOPI
 #define M_TWOPI (2.0 * M_PI)
