@@ -11,5 +11,5 @@ App(
     fap_author="Mane Function",
     fap_weburl="",
     fap_version="1.0",
-    fap_description="DO NOT OVERTIME. NOT ANYMORE!",
+    fap_description="Clock out before burnout!",
 )
