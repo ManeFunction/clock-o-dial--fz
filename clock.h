@@ -20,6 +20,13 @@
 // Max number of individually-logged breaks per shift; further breaks past this just aren't logged
 #define MAX_BREAKS 16
 
+// Segment fill geometry: a square inset from the dial's edge, sized so marks stay uncovered.
+#define FILL_MARGIN    5
+#define FILL_HALF_SIZE (FACE_RADIUS - FILL_MARGIN)
+#define FILL_GRID_SIDE (2 * FILL_HALF_SIZE + 1)
+// Half the pixels in the fill square pass the worked-pattern's dither (only those are stored)
+#define FILL_PIXEL_CAPACITY ((FILL_GRID_SIDE * FILL_GRID_SIDE + 1) / 2)
+
 typedef enum {
     Normal = 0,
     CopyHor,
@@ -38,9 +45,19 @@ typedef struct {
     Point end;
 } Line;
 
+// A pixel eligible for the worked-segment dither, with its angle on the dial precomputed once
+// at startup instead of every frame - only its arc containment needs checking per redraw.
+typedef struct {
+    int8_t x;
+    int8_t y;
+    float angle;
+} FillPixel;
+
 typedef struct {
     Line minutes[CLOCK_HOURS * 4]; // 4 minor ticks between each hour mark (every 5 minutes)
     Line hour_marks[CLOCK_HOURS];
+    FillPixel fill_pixels[FILL_PIXEL_CAPACITY];
+    uint16_t fill_pixel_count;
 } ClockFace;
 
 #define CONFIG_VERSION 10

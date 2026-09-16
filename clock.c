@@ -135,6 +135,22 @@ void calc_clock_face(ClockFace* face) {
             minute_mark_index++;
         }
     }
+
+    // Precompute the worked-pattern's dither pixels and their dial angle once, so draw_timer
+    // only has to check arc containment (no atan2f) on every one-second redraw.
+    uint16_t fill_index = 0;
+    for(int8_t y = -FILL_HALF_SIZE; y <= FILL_HALF_SIZE; y++) {
+        for(int8_t x = -FILL_HALF_SIZE; x <= FILL_HALF_SIZE; x++) {
+            if(((x + y) & 1) != 0) continue; // dense 45-degree checkerboard (half the pixels)
+            float angle = atan2f((float)x, (float)y);
+            if(angle < 0.0f) angle += M_TWOPI_F;
+            face->fill_pixels[fill_index].x = x;
+            face->fill_pixels[fill_index].y = y;
+            face->fill_pixels[fill_index].angle = angle;
+            fill_index++;
+        }
+    }
+    face->fill_pixel_count = fill_index;
 }
 
 // Angle (radians, clockwise from top) for a point in time within a repeating 12-hour dial.
@@ -216,36 +232,28 @@ void draw_timer(
             break_angle_count++;
         }
 
-        // Reduce fill area by a margin to avoid covering the tick marks
-        uint8_t fill_margin = 5;
-        int8_t width = FACE_RADIUS - fill_margin;
-        int8_t height = FACE_RADIUS - fill_margin;
+        // Each candidate pixel's position and dial angle were precomputed once at startup -
+        // only its arc containment (cheap fmodf-based checks) needs doing every redraw.
+        for(uint16_t i = 0; i < face->fill_pixel_count; i++) {
+            int8_t x = face->fill_pixels[i].x;
+            int8_t y = face->fill_pixels[i].y;
+            float pixel_angle = face->fill_pixels[i].angle;
 
-        for(int8_t y = -height; y <= height; y++) {
-            for(int8_t x = -width; x <= width; x++) {
-                // Worked pattern: dense 45-degree checkerboard (half the pixels)
-                bool worked_dither = ((x + y) & 1) == 0;
-                if(!worked_dither) continue; // never eligible for either pattern
-
-                float pixel_angle = atan2f((float)x, (float)y);
-                if(pixel_angle < 0.0f) pixel_angle += M_TWOPI_F;
-
-                if(angle_in_forward_arc(pixel_angle, history_start_angle, history_length)) {
-                    bool in_break = false;
-                    for(uint8_t bi = 0; bi < break_angle_count; bi++) {
-                        if(angle_in_forward_arc(
-                               pixel_angle, break_start_angles[bi], break_lengths[bi])) {
-                            in_break = true;
-                            break;
-                        }
+            if(angle_in_forward_arc(pixel_angle, history_start_angle, history_length)) {
+                bool in_break = false;
+                for(uint8_t bi = 0; bi < break_angle_count; bi++) {
+                    if(angle_in_forward_arc(
+                           pixel_angle, break_start_angles[bi], break_lengths[bi])) {
+                        in_break = true;
+                        break;
                     }
-                    if(!in_break) canvas_draw_dot(canvas, OFS_LEFT_X + x, OFS_Y - y);
-                } else if(angle_in_forward_arc(pixel_angle, predicted_start_angle, predicted_length)) {
-                    // Predicted pattern: sparse grid dither (a quarter of the pixels) - lets more
-                    // light through than the worked pattern, since this time hasn't happened yet.
-                    bool predicted_dither = ((x & 1) == 0) && ((y & 1) == 0);
-                    if(predicted_dither) canvas_draw_dot(canvas, OFS_LEFT_X + x, OFS_Y - y);
                 }
+                if(!in_break) canvas_draw_dot(canvas, OFS_LEFT_X + x, OFS_Y - y);
+            } else if(angle_in_forward_arc(pixel_angle, predicted_start_angle, predicted_length)) {
+                // Predicted pattern: sparse grid dither (a quarter of the pixels) - lets more
+                // light through than the worked pattern, since this time hasn't happened yet.
+                bool predicted_dither = ((x & 1) == 0) && ((y & 1) == 0);
+                if(predicted_dither) canvas_draw_dot(canvas, OFS_LEFT_X + x, OFS_Y - y);
             }
         }
     }
