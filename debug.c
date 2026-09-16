@@ -9,6 +9,40 @@ bool is_debug_device(void) {
     return strcmp(furi_hal_version_get_name_ptr(), DEBUG_DEVICE_NAME) == 0;
 }
 
+// Left, Left, Down, Right, Down, Left - entered as plain presses while a shift is active.
+static const InputKey debug_combo[] = {
+    InputKeyLeft,
+    InputKeyLeft,
+    InputKeyDown,
+    InputKeyRight,
+    InputKeyDown,
+    InputKeyLeft,
+};
+#define DEBUG_COMBO_LENGTH (sizeof(debug_combo) / sizeof(debug_combo[0]))
+
+static InputKey debug_combo_buffer[DEBUG_COMBO_LENGTH];
+static bool debug_mode_unlocked = false;
+
+bool is_debug_mode_active(void) {
+    return is_debug_device() && debug_mode_unlocked;
+}
+
+bool debug_feed_combo_key(InputKey key) {
+    if(!is_debug_device()) return false; // the combo means nothing anywhere else
+
+    memmove(
+        &debug_combo_buffer[0],
+        &debug_combo_buffer[1],
+        (DEBUG_COMBO_LENGTH - 1) * sizeof(InputKey));
+    debug_combo_buffer[DEBUG_COMBO_LENGTH - 1] = key;
+
+    if(memcmp(debug_combo_buffer, debug_combo, sizeof(debug_combo)) == 0) {
+        debug_mode_unlocked = true;
+        return true;
+    }
+    return false;
+}
+
 #define DEBUG_TIME_TRAVEL_SECONDS 3600
 
 // Shifts a wall-clock (seconds-of-day) value by delta, wrapping around midnight.

@@ -483,6 +483,13 @@ int32_t clock_main(void* p) {
                 // of type, bypassing the hold-to-confirm meant for real button presses.
                 terminate = true;
             } else if(event.type == InputTypePress) {
+                // The combo's last key is also the debug-action key - don't let the press that
+                // unlocks debug mode also immediately trigger that action.
+                bool debug_just_unlocked =
+                    app->has_been_started && debug_feed_combo_key(event.key);
+                if(debug_just_unlocked && app->cfg.sound_enabled) {
+                    play_rick_roll_melody(notification);
+                }
                 switch(event.key) {
                 case InputKeyOk:
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
@@ -535,7 +542,8 @@ int32_t clock_main(void* p) {
                                 modify_timer_down(&app->cfg);
                             }
                             cfg_save_internal(file, &app->cfg);
-                        } else if(event.key == InputKeyLeft && is_debug_device()) {
+                        } else if(event.key == InputKeyLeft && !debug_just_unlocked &&
+                                  is_debug_mode_active()) {
                             debug_time_travel(app);
                         } else if(event.key == InputKeyRight) {
                             // Working/Break mode: toggle eco mode. Same reveal-then-confirm
