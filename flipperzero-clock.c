@@ -49,6 +49,23 @@ static uint32_t back_hold_required_ms(const AppData* app) {
     return app->has_been_started ? HOLD_CONFIRM_MS : HOLD_CONFIRM_MS / 2;
 }
 
+// Eco and backlight share one status-icon slot; whichever changed most recently wins it. Used
+// both to decide what to render and, at input time, whether a press should reveal or confirm -
+// an option only confirms when its own icon is the one actually on screen right now.
+static StatusIconSlot current_status_icon_slot(const AppData* app, uint32_t now) {
+    bool eco_flashing = (now - app->eco_state_change_tick) < ICON_FLASH_MS;
+    bool backlight_flashing = (now - app->backlight_state_change_tick) < ICON_FLASH_MS;
+    if(eco_flashing && backlight_flashing) {
+        return (app->eco_state_change_tick >= app->backlight_state_change_tick) ? StatusIconEco :
+                                                                                   StatusIconBacklight;
+    } else if(eco_flashing) {
+        return StatusIconEco;
+    } else if(backlight_flashing) {
+        return StatusIconBacklight;
+    }
+    return StatusIconAnimation;
+}
+
 static void adjust_shift_duration(AppData* app, File* file, bool increase) {
     if(furi_mutex_acquire(app->mutex, 100) != FuriStatusOk) return;
     if(!app->has_been_started) {
@@ -149,14 +166,15 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
     bool eco_frozen = app->cfg.eco_mode_enabled &&
                       (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
 
+    StatusIconSlot status_icon_slot = current_status_icon_slot(app, current_tick);
+
     UiOverlay ui = {
         .sound_enabled = app->cfg.sound_enabled,
         .show_sound_icon = !app->cfg.sound_enabled ||
                             (current_tick - app->sound_state_change_tick) < ICON_FLASH_MS,
         .backlight_on = app->cfg.backlight_on,
-        .show_backlight_icon = (current_tick - app->backlight_state_change_tick) < ICON_FLASH_MS,
         .eco_mode_enabled = app->cfg.eco_mode_enabled,
-        .show_eco_icon = (current_tick - app->eco_state_change_tick) < ICON_FLASH_MS,
+        .status_icon_slot = status_icon_slot,
         .animations_frozen = eco_frozen,
         .hold_active = false,
         .hold_fraction = 0.0f,
@@ -490,12 +508,19 @@ int32_t clock_main(void* p) {
                     }
                     break;
                 case InputKeyDown:
-                    // Backlight toggle works the same in every mode
+                    // Backlight toggle works the same in every mode. The first press while its
+                    // icon isn't showing just reveals the current state; press again while it's
+                    // showing to actually change it.
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        app->cfg.backlight_on = !app->cfg.backlight_on;
-                        app->backlight_state_change_tick = furi_get_tick();
-                        set_backlight(notification, app->cfg.backlight_on);
-                        cfg_save_internal(file, &app->cfg);
+                        uint32_t now = furi_get_tick();
+                        bool icon_visible =
+                            current_status_icon_slot(app, now) == StatusIconBacklight;
+                        if(icon_visible) {
+                            app->cfg.backlight_on = !app->cfg.backlight_on;
+                            set_backlight(notification, app->cfg.backlight_on);
+                            cfg_save_internal(file, &app->cfg);
+                        }
+                        app->backlight_state_change_tick = now;
                         furi_mutex_release(app->mutex);
                     }
                     break;
@@ -513,10 +538,15 @@ int32_t clock_main(void* p) {
                         } else if(event.key == InputKeyLeft && is_debug_device()) {
                             debug_time_travel(app);
                         } else if(event.key == InputKeyRight) {
-                            // Working/Break mode: toggle eco mode
-                            app->cfg.eco_mode_enabled = !app->cfg.eco_mode_enabled;
-                            app->eco_state_change_tick = furi_get_tick();
-                            cfg_save_internal(file, &app->cfg);
+                            // Working/Break mode: toggle eco mode. Same reveal-then-confirm
+                            // pattern as backlight - first press just shows the current state.
+                            uint32_t now = furi_get_tick();
+                            bool icon_visible = current_status_icon_slot(app, now) == StatusIconEco;
+                            if(icon_visible) {
+                                app->cfg.eco_mode_enabled = !app->cfg.eco_mode_enabled;
+                                cfg_save_internal(file, &app->cfg);
+                            }
+                            app->eco_state_change_tick = now;
                         }
                         furi_mutex_release(app->mutex);
                     }

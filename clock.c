@@ -330,41 +330,29 @@ void draw_timer(
     // animation timer is needed. Eco mode freezes both on frame 1 after a minute of inactivity.
     bool show_frame_2 = !ui->animations_frozen && (now_wallclock_secs % 2 != 0);
 
-    if(is_working) {
-        const Icon* working_icon = show_frame_2 ? &I_working_2 : &I_working_1;
-        canvas_draw_icon(
-            canvas,
-            OFS_RIGHT_X - icon_get_width(working_icon) / 2,
-            icon_bottom_y - icon_get_height(working_icon),
-            working_icon);
+    // Eco/backlight share the working/break animation's spot and take priority over it while
+    // flashing - pressing either button briefly replaces the animation with its status icon.
+    const Icon* status_icon = NULL;
+    if(ui->status_icon_slot == StatusIconEco) {
+        status_icon = ui->eco_mode_enabled ? &I_eco_on : &I_eco_off;
+    } else if(ui->status_icon_slot == StatusIconBacklight) {
+        status_icon = ui->backlight_on ? &I_light_on : &I_light_off;
+    } else if(is_working) {
+        status_icon = show_frame_2 ? &I_working_2 : &I_working_1;
     } else if(is_break) {
-        const Icon* coffee_icon = show_frame_2 ? &I_coffee_2 : &I_coffee_1;
+        status_icon = show_frame_2 ? &I_coffee_2 : &I_coffee_1;
+    }
+    if(status_icon != NULL) {
         canvas_draw_icon(
             canvas,
-            OFS_RIGHT_X - icon_get_width(coffee_icon) / 2,
-            icon_bottom_y - icon_get_height(coffee_icon),
-            coffee_icon);
+            OFS_RIGHT_X - icon_get_width(status_icon) / 2,
+            icon_bottom_y - icon_get_height(status_icon),
+            status_icon);
     }
 
     if(ui->show_sound_icon) {
         const Icon* sound_icon = ui->sound_enabled ? &I_sound_on : &I_sound_off;
         canvas_draw_icon(canvas, 128 - icon_get_width(sound_icon), 2, sound_icon);
-    }
-
-    if(ui->show_eco_icon) {
-        // Right edge, vertically centered between the sound icon (top) and backlight icon
-        // (bottom).
-        const Icon* eco_icon = ui->eco_mode_enabled ? &I_eco_on : &I_eco_off;
-        int32_t eco_x = 128 - icon_get_width(eco_icon);
-        int32_t eco_y = (64 - icon_get_height(eco_icon)) / 2;
-        canvas_draw_icon(canvas, eco_x, eco_y, eco_icon);
-    }
-
-    if(ui->show_backlight_icon) {
-        const Icon* backlight_icon = ui->backlight_on ? &I_light_on : &I_light_off;
-        int32_t bl_x = 128 - icon_get_width(backlight_icon);
-        int32_t bl_y = 64 - 2 - icon_get_height(backlight_icon);
-        canvas_draw_icon(canvas, bl_x, bl_y, backlight_icon);
     }
 
     if(ui->hold_active) {
