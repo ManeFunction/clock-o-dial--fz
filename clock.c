@@ -223,8 +223,6 @@ void draw_timer(
 
         for(int8_t y = -height; y <= height; y++) {
             for(int8_t x = -width; x <= width; x++) {
-                if(abs(x) > width || abs(y) > height) continue;
-
                 // Worked pattern: dense 45-degree checkerboard (half the pixels)
                 bool worked_dither = ((x + y) & 1) == 0;
                 if(!worked_dither) continue; // never eligible for either pattern
@@ -302,7 +300,10 @@ void draw_timer(
     if(!has_been_started) {
         // Left/right arrows flank the shift-length readout, hinting at the controls that adjust
         // it. Positioned off a fixed reference width so they never move as the value changes.
-        uint16_t half_w = canvas_string_width(canvas, "12:00") / 2;
+        // The width is font metrics for a constant string, so it's measured once and cached
+        // rather than re-measured every frame.
+        static uint16_t half_w = 0;
+        if(half_w == 0) half_w = canvas_string_width(canvas, "12:00") / 2;
         int32_t left_x = OFS_RIGHT_X - half_w - 6;
         int32_t right_x = OFS_RIGHT_X + half_w + 2;
         int32_t arrow_y = (OFS_Y - 5) - 3;
