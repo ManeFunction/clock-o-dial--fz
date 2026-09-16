@@ -1,7 +1,7 @@
 #!/bin/bash
 # Launch app and handle cleanup on exit
 
-APP_ID="crock_o_dail"
+APP_ID="crock_o_dial"
 UFBT_CMD="ufbt"
 
 # Function to stop the app
