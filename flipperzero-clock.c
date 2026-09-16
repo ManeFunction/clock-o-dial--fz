@@ -28,8 +28,8 @@ uint32_t rtc_now_seconds(void) {
 #define FINISH_CHECK_THRESHOLD 60 // Only check frequently within last 60 seconds
 
 // Forward declarations
-static void play_rick_roll_melody(NotificationApp* notification);
-static void play_hour_chime(NotificationApp* notification);
+static void play_rick_roll_melody(NotificationApp* notification, bool sound_enabled);
+static void play_hour_chime(NotificationApp* notification, bool sound_enabled);
 
 static void set_backlight(NotificationApp* notification, bool on) {
     // Only toggle the always-on lock, never force it off directly - an explicit "off" fights
@@ -263,7 +263,9 @@ static void cfg_save(File* file, AppData* app) {
 // Rick Roll melody - "Never gonna give you up" opening phrase
 // Exact notes and timing to match the iconic melody
 // Based on tracker.c note_to_freq() logic and actual song timing
-static void play_rick_roll_melody(NotificationApp* notification) {
+// The LED blinks through the same note rhythm regardless of sound_enabled, so shift-end is
+// still noticeable while muted.
+static void play_rick_roll_melody(NotificationApp* notification, bool sound_enabled) {
     UNUSED(notification);
 
 // Frequency constants for clarity
@@ -288,24 +290,28 @@ static void play_rick_roll_melody(NotificationApp* notification) {
     uint16_t pauses[] = {30, 30, 30, 30, 40, 40, 0};
 
     // Acquire speaker (similar to tracker_speaker_init)
-    if(furi_hal_speaker_acquire(1000)) {
-        // Play each note with exact timing
-        for(int i = 0; i < 7; i++) {
-            furi_hal_speaker_start(notes[i], 0.5f); // frequency, volume (0.5 = 50%)
-            furi_delay_ms(durations[i]);
-            furi_hal_speaker_stop();
-            if(i < 6) {
-                furi_delay_ms(pauses[i]); // Pause between notes
-            }
+    bool speaker_ready = sound_enabled && furi_hal_speaker_acquire(1000);
+
+    // Play each note with exact timing, blinking red in step whether or not sound plays
+    for(int i = 0; i < 7; i++) {
+        furi_hal_light_set(LightRed, 255);
+        if(speaker_ready) furi_hal_speaker_start(notes[i], 0.5f); // frequency, volume (0.5 = 50%)
+        furi_delay_ms(durations[i]);
+        if(speaker_ready) furi_hal_speaker_stop();
+        furi_hal_light_set(LightRed, 0);
+        if(i < 6) {
+            furi_delay_ms(pauses[i]); // Pause between notes
         }
-        // Release speaker
-        furi_hal_speaker_release();
     }
+
+    if(speaker_ready) furi_hal_speaker_release();
 }
 
 // Play satisfying "tu-tum" chime for hourly milestones
 // Two low notes: ascending for positive feel
-static void play_hour_chime(NotificationApp* notification) {
+// The LED blinks through the same "tu-tum" rhythm regardless of sound_enabled, so hour
+// milestones are still noticeable while muted.
+static void play_hour_chime(NotificationApp* notification, bool sound_enabled) {
     UNUSED(notification);
 
     // Low satisfying notes - ascending "tu-tum" for positive feel
@@ -315,23 +321,26 @@ static void play_hour_chime(NotificationApp* notification) {
     float note2 = 130.81f; // C3
 
     // Acquire speaker
-    if(furi_hal_speaker_acquire(1000)) {
-        // Play first note "tu"
-        furi_hal_speaker_start(note1, 0.4f); // Lower volume for subtlety
-        furi_delay_ms(150);
-        furi_hal_speaker_stop();
+    bool speaker_ready = sound_enabled && furi_hal_speaker_acquire(1000);
 
-        // Short pause between notes
-        furi_delay_ms(50);
+    // Play first note "tu"
+    furi_hal_light_set(LightGreen, 255);
+    if(speaker_ready) furi_hal_speaker_start(note1, 0.4f); // Lower volume for subtlety
+    furi_delay_ms(150);
+    if(speaker_ready) furi_hal_speaker_stop();
+    furi_hal_light_set(LightGreen, 0);
 
-        // Play second note "tum" (ascending)
-        furi_hal_speaker_start(note2, 0.4f);
-        furi_delay_ms(200); // Slightly longer for the "tum"
-        furi_hal_speaker_stop();
+    // Short pause between notes
+    furi_delay_ms(50);
 
-        // Release speaker
-        furi_hal_speaker_release();
-    }
+    // Play second note "tum" (ascending)
+    furi_hal_light_set(LightGreen, 255);
+    if(speaker_ready) furi_hal_speaker_start(note2, 0.4f);
+    furi_delay_ms(200); // Slightly longer for the "tum"
+    if(speaker_ready) furi_hal_speaker_stop();
+    furi_hal_light_set(LightGreen, 0);
+
+    if(speaker_ready) furi_hal_speaker_release();
 }
 
 int32_t clock_main(void* p) {
@@ -438,8 +447,8 @@ int32_t clock_main(void* p) {
                         furi_mutex_release(app->mutex);
                         // Force update to show finished state
                         view_port_update(view_port);
-                        // Play sound outside of mutex
-                        if(sound_enabled) play_rick_roll_melody(notification);
+                        // Play sound/light outside of mutex - the LED still blinks even if muted
+                        play_rick_roll_melody(notification, sound_enabled);
                         // Re-acquire mutex for next iteration
                         continue;
                     }
@@ -456,8 +465,8 @@ int32_t clock_main(void* p) {
                         app->last_hour_played = current_hour;
                         bool sound_enabled = app->cfg.sound_enabled;
                         furi_mutex_release(app->mutex);
-                        // Play hour chime outside of mutex
-                        if(sound_enabled) play_hour_chime(notification);
+                        // Play hour chime outside of mutex - the LED still blinks even if muted
+                        play_hour_chime(notification, sound_enabled);
                         // Re-acquire mutex for next iteration
                         continue;
                     }
@@ -487,8 +496,8 @@ int32_t clock_main(void* p) {
                 // unlocks debug mode also immediately trigger that action.
                 bool debug_just_unlocked =
                     app->has_been_started && debug_feed_combo_key(event.key);
-                if(debug_just_unlocked && app->cfg.sound_enabled) {
-                    play_rick_roll_melody(notification);
+                if(debug_just_unlocked) {
+                    play_rick_roll_melody(notification, app->cfg.sound_enabled);
                 }
                 switch(event.key) {
                 case InputKeyOk:
