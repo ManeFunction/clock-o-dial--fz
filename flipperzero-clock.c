@@ -29,38 +29,78 @@ static uint32_t rtc_now_seconds(void) {
 static void play_rick_roll_melody(NotificationApp* notification);
 static void play_hour_chime(NotificationApp* notification);
 
-// Calculate skip amount based on hold duration
-// Short press: 1 minute
-// Medium hold: 5 minutes
-// Long hold: 20 minutes
-static uint32_t calculate_skip_amount(uint32_t press_duration_ms) {
-    if(press_duration_ms < 2000) {
-        return 60; // 1 minute
-    } else if(press_duration_ms < 5000) {
-        return 300; // 5 minutes
-    } else {
-        return 1200; // 20 minutes
-    }
-}
-
 typedef struct {
     FuriMutex* mutex;
     TimerConfig cfg;
-    ClockFace face; // Runtime-only, calculated from timer_duration_hours
+    ClockFace face; // Runtime-only; the dial is a fixed 12-hour face, calculated once
     bool running;
     bool has_been_started;
     uint32_t start_tick;
     uint32_t start_wallclock_secs; // Real time-of-day when the current shift began
     uint32_t elapsed_seconds;
     uint16_t ms_adjust;
-    bool fill_enabled; // Toggle for segment fill visibility
     bool finish_sound_played; // Track if finish sound has been played
-    uint32_t skip_left_press_tick; // Track when left skip button was pressed
-    uint32_t skip_right_press_tick; // Track when right skip button was pressed
-    bool skip_left_active; // Track if left skip button is currently held
-    bool skip_right_active; // Track if right skip button is currently held
     uint32_t last_hour_played; // Track last hour that played chime (to avoid repeats)
+    uint32_t pause_start_tick; // When the current break began, for the sub-minute fold-in
+    uint32_t sound_state_change_tick; // Drives the sound icon's 5s flash
+    uint32_t backlight_state_change_tick; // Drives the backlight icon's 5s flash
+    uint32_t ok_press_tick; // 0 when OK isn't currently held
+    bool ok_hold_triggered; // Reset already fired for the current hold
+    uint32_t back_press_tick; // 0 when Back isn't currently held
+    bool back_hold_triggered; // Close already fired for the current hold
 } AppData;
+
+static void set_backlight(NotificationApp* notification, bool on) {
+    // Only toggle the always-on lock, never force it off directly - an explicit "off" fights
+    // the input service's own wake-on-press behavior and flickers. Releasing the lock instead
+    // just lets the backlight follow the user's own normal auto-dim settings.
+    if(on) {
+        notification_message_block(notification, &sequence_display_backlight_enforce_on);
+    } else {
+        notification_message_block(notification, &sequence_display_backlight_enforce_auto);
+    }
+}
+
+static void cfg_save_internal(File* file, TimerConfig* cfg);
+
+// Nothing is running yet in Set mode, so closing from there needs only half the hold.
+static uint32_t back_hold_required_ms(const AppData* app) {
+    return app->has_been_started ? HOLD_CONFIRM_MS : HOLD_CONFIRM_MS / 2;
+}
+
+static void adjust_shift_duration(AppData* app, File* file, bool increase) {
+    if(furi_mutex_acquire(app->mutex, 100) != FuriStatusOk) return;
+    if(!app->has_been_started) {
+        if(increase) {
+            modify_timer_up(&app->cfg);
+        } else {
+            modify_timer_down(&app->cfg);
+        }
+        cfg_save_internal(file, &app->cfg);
+    }
+    furi_mutex_release(app->mutex);
+}
+
+// Fills *label/*fraction and returns true if a qualifying reset/close hold is past HOLD_SHOW_MS.
+static bool
+    get_hold_overlay(AppData* app, uint32_t now_tick, const char** label, float* fraction) {
+    uint32_t hold_ms;
+    uint32_t required_ms;
+    if(app->ok_press_tick != 0 && !app->ok_hold_triggered) {
+        hold_ms = now_tick - app->ok_press_tick;
+        required_ms = HOLD_CONFIRM_MS;
+        *label = "RESETTING";
+    } else if(app->back_press_tick != 0 && !app->back_hold_triggered) {
+        hold_ms = now_tick - app->back_press_tick;
+        required_ms = back_hold_required_ms(app);
+        *label = "CLOSING";
+    } else {
+        return false;
+    }
+    if(hold_ms < HOLD_SHOW_MS) return false;
+    *fraction = (float)hold_ms / (float)required_ms;
+    return true;
+}
 
 static void app_draw_callback(Canvas* canvas, void* ctx) {
     furi_assert(ctx);
@@ -114,6 +154,18 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         }
     }
 
+    UiOverlay ui = {
+        .sound_enabled = app->cfg.sound_enabled,
+        .show_sound_icon = !app->cfg.sound_enabled ||
+                            (current_tick - app->sound_state_change_tick) < ICON_FLASH_MS,
+        .backlight_on = app->cfg.backlight_on,
+        .show_backlight_icon = (current_tick - app->backlight_state_change_tick) < ICON_FLASH_MS,
+        .hold_active = false,
+        .hold_fraction = 0.0f,
+        .hold_label = NULL,
+    };
+    ui.hold_active = get_hold_overlay(app, current_tick, &ui.hold_label, &ui.hold_fraction);
+
     draw_timer(
         canvas,
         &app->face,
@@ -122,9 +174,9 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         ms,
         app->running,
         app->has_been_started,
-        app->fill_enabled,
         rtc_now_seconds(),
-        app->start_wallclock_secs);
+        app->start_wallclock_secs,
+        &ui);
     furi_mutex_release(app->mutex);
 }
 
@@ -152,12 +204,18 @@ static bool cfg_load(File* file, AppData* app) {
             // Version 5 had 'ofs_x' field which was removed in version 6 (always OFS_LEFT_X)
             // Version 6 had 'face' field which was removed in version 7 (recalculated from timer_duration_hours)
             // Version 7 didn't have 'fill_enabled' field, added in version 8
-            if(app->cfg.version < 8) {
-                app->cfg.fill_enabled = true; // Default to enabled for old configs
+            // Version 8's 'fill_enabled' was replaced by 'sound_enabled' in version 9 (segments
+            // are always shown now; sound can be muted instead)
+            if(app->cfg.version < 9) {
+                app->cfg.sound_enabled = true; // Default to enabled for old configs
+            }
+            // Version 10 added 'backlight_on' (previously runtime-only, not persisted)
+            if(app->cfg.version < 10) {
+                app->cfg.backlight_on = true; // Default to enabled for old configs
             }
             // Old configs will fail to load due to size mismatch and be recreated
             app->cfg.version = CONFIG_VERSION;
-            // Ensure valid timer duration
+            // Ensure valid shift duration (range shrunk to 1-12 hours in version 9)
             if(app->cfg.timer_duration_hours < 1 ||
                app->cfg.timer_duration_hours > MAX_TIMER_HOURS) {
                 app->cfg.timer_duration_hours = DEFAULT_TIMER_HOURS;
@@ -269,21 +327,22 @@ int32_t clock_main(void* p) {
     app->start_wallclock_secs = 0;
     app->ms_adjust = 0;
     app->finish_sound_played = false;
-    app->skip_left_press_tick = 0;
-    app->skip_right_press_tick = 0;
-    app->skip_left_active = false;
-    app->skip_right_active = false;
     app->last_hour_played = 0;
+    app->pause_start_tick = 0;
+    // Far enough in the past that neither flash icon shows before an explicit toggle
+    app->sound_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
+    app->backlight_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
+    app->ok_press_tick = 0;
+    app->ok_hold_triggered = false;
+    app->back_press_tick = 0;
+    app->back_hold_triggered = false;
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     File* file = storage_file_alloc(storage);
 
     if(!cfg_load(file, app)) {
         init_timer_config(&app->cfg);
-        app->fill_enabled = app->cfg.fill_enabled; // Sync from config
         cfg_save(file, app);
-    } else {
-        app->fill_enabled = app->cfg.fill_enabled; // Load fill_enabled from config
     }
     // The dial is a fixed 12-hour clock face, independent of shift duration
     calc_clock_face(&app->face);
@@ -298,7 +357,7 @@ int32_t clock_main(void* p) {
     gui_add_view_port(gui, view_port, GuiLayerFullscreen);
 
     NotificationApp* notification = furi_record_open(RECORD_NOTIFICATION);
-    notification_message_block(notification, &sequence_display_backlight_enforce_on);
+    set_backlight(notification, app->cfg.backlight_on);
 
     InputEvent event;
     bool terminate = false;
@@ -349,11 +408,12 @@ int32_t clock_main(void* p) {
                         }
                         app->finish_sound_played = true;
                         app->running = false;
+                        bool sound_enabled = app->cfg.sound_enabled;
                         furi_mutex_release(app->mutex);
                         // Force update to show finished state
                         view_port_update(view_port);
                         // Play sound outside of mutex
-                        play_rick_roll_melody(notification);
+                        if(sound_enabled) play_rick_roll_melody(notification);
                         // Re-acquire mutex for next iteration
                         continue;
                     }
@@ -368,9 +428,10 @@ int32_t clock_main(void* p) {
                     uint32_t current_hour = elapsed_seconds / 3600;
                     if(current_hour > 0 && current_hour != app->last_hour_played) {
                         app->last_hour_played = current_hour;
+                        bool sound_enabled = app->cfg.sound_enabled;
                         furi_mutex_release(app->mutex);
                         // Play hour chime outside of mutex
-                        play_hour_chime(notification);
+                        if(sound_enabled) play_hour_chime(notification);
                         // Re-acquire mutex for next iteration
                         continue;
                     }
@@ -384,65 +445,119 @@ int32_t clock_main(void* p) {
         uint32_t queue_timeout = FRAME_MS_RUNNING;
 
         if(furi_message_queue_get(event_queue, &event, queue_timeout) == FuriStatusOk) {
-            // Handle long press for Back button to exit
-            if(event.type == InputTypeLong && event.key == InputKeyBack) {
+            if(event.key == InputKeyBack && event.sequence_source == INPUT_SEQUENCE_SOURCE_SOFTWARE) {
+                // A software/RPC-injected event (e.g. the Loader's "close app" request from
+                // `ufbt launch` or the app_close CLI command) - close immediately regardless
+                // of type, bypassing the hold-to-confirm meant for real button presses.
                 terminate = true;
-            } else if(event.type == InputTypeLong && event.key == InputKeyOk) {
-                // Long press OK: reset to set mode
-                if(furi_mutex_acquire(app->mutex, FuriWaitForever) == FuriStatusOk) {
-                    app->has_been_started = false;
-                    app->running = false;
-                    app->elapsed_seconds = 0;
-                    app->ms_adjust = 0;
-                    app->start_tick = 0;
-                    app->start_wallclock_secs = 0;
-                    app->finish_sound_played = false;
-                    furi_mutex_release(app->mutex);
-                }
-            } else if((event.type == InputTypePress) || (event.type == InputTypeRepeat)) {
+            } else if(event.type == InputTypePress) {
                 switch(event.key) {
-                case InputKeyUp:
-                    // Use timeout to avoid blocking if draw callback is holding mutex
+                case InputKeyOk:
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        if(!app->has_been_started) {
-                            // Set mode: change timer duration
-                            modify_timer_up(&app->cfg);
-                            cfg_save_internal(file, &app->cfg);
-                        } else {
-                            // Non-set mode: toggle fill visibility
-                            app->fill_enabled = !app->fill_enabled;
-                            app->cfg.fill_enabled = app->fill_enabled; // Sync to config
-                            cfg_save_internal(file, &app->cfg); // Save config
-                        }
+                        app->ok_press_tick = furi_get_tick();
+                        app->ok_hold_triggered = false;
+                        furi_mutex_release(app->mutex);
+                    }
+                    break;
+                case InputKeyBack:
+                    if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
+                        app->back_press_tick = furi_get_tick();
+                        app->back_hold_triggered = false;
+                        furi_mutex_release(app->mutex);
+                    }
+                    break;
+                case InputKeyUp:
+                    // Mute toggle works the same in every mode
+                    if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
+                        app->cfg.sound_enabled = !app->cfg.sound_enabled;
+                        app->sound_state_change_tick = furi_get_tick();
+                        cfg_save_internal(file, &app->cfg);
                         furi_mutex_release(app->mutex);
                     }
                     break;
                 case InputKeyDown:
-                    // Use timeout to avoid blocking if draw callback is holding mutex
+                    // Backlight toggle works the same in every mode
+                    if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
+                        app->cfg.backlight_on = !app->cfg.backlight_on;
+                        app->backlight_state_change_tick = furi_get_tick();
+                        set_backlight(notification, app->cfg.backlight_on);
+                        cfg_save_internal(file, &app->cfg);
+                        furi_mutex_release(app->mutex);
+                    }
+                    break;
+                case InputKeyLeft:
+                case InputKeyRight:
+                    // Shift mode only: adjust the configured shift length
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
                         if(!app->has_been_started) {
-                            // Set mode: change timer duration
-                            modify_timer_down(&app->cfg);
+                            if(event.key == InputKeyRight) {
+                                modify_timer_up(&app->cfg);
+                            } else {
+                                modify_timer_down(&app->cfg);
+                            }
                             cfg_save_internal(file, &app->cfg);
-                        } else {
-                            // Non-set mode: toggle fill visibility
-                            app->fill_enabled = !app->fill_enabled;
-                            app->cfg.fill_enabled = app->fill_enabled; // Sync to config
-                            cfg_save_internal(file, &app->cfg); // Save config
                         }
                         furi_mutex_release(app->mutex);
                     }
                     break;
+                default:
+                    break;
+                }
+            } else if(event.type == InputTypeRepeat) {
+                switch(event.key) {
                 case InputKeyOk:
-                    // Only handle initial press, not repeat events (to prevent repeated firing when held)
-                    if(event.type == InputTypePress) {
-                        if(furi_mutex_acquire(app->mutex, FuriWaitForever) == FuriStatusOk) {
-                            // Check if timer is finished
-                            uint32_t timer_duration_seconds = app->cfg.timer_duration_hours * 3600;
-                            uint32_t current_tick = furi_get_tick();
+                    if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
+                        if(app->ok_press_tick != 0 && !app->ok_hold_triggered &&
+                           (furi_get_tick() - app->ok_press_tick) >= HOLD_CONFIRM_MS) {
+                            // Held long enough - reset back to Shift mode
+                            app->has_been_started = false;
+                            app->running = false;
+                            app->elapsed_seconds = 0;
+                            app->ms_adjust = 0;
+                            app->start_tick = 0;
+                            app->start_wallclock_secs = 0;
+                            app->finish_sound_played = false;
+                            app->ok_hold_triggered = true;
+                        }
+                        furi_mutex_release(app->mutex);
+                    }
+                    break;
+                case InputKeyBack:
+                    if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
+                        if(app->back_press_tick != 0 && !app->back_hold_triggered &&
+                           (furi_get_tick() - app->back_press_tick) >= back_hold_required_ms(app)) {
+                            app->back_hold_triggered = true;
+                            terminate = true;
+                        }
+                        furi_mutex_release(app->mutex);
+                    }
+                    break;
+                case InputKeyLeft:
+                case InputKeyRight:
+                    // Holding left/right keeps cycling the shift duration in Shift mode;
+                    // does nothing once a shift has started
+                    adjust_shift_duration(app, file, event.key == InputKeyRight);
+                    break;
+                default:
+                    break;
+                }
+            } else if(event.type == InputTypeRelease) {
+                switch(event.key) {
+                case InputKeyOk:
+                    if(furi_mutex_acquire(app->mutex, FuriWaitForever) == FuriStatusOk) {
+                        uint32_t hold_ms =
+                            app->ok_press_tick != 0 ? furi_get_tick() - app->ok_press_tick : 0;
+                        // Only a plain tap (released before the reset overlay ever showed)
+                        // starts/pauses/resumes. Releasing mid-hold just cancels the reset,
+                        // same as reaching HOLD_CONFIRM_MS already did via the repeat handler.
+                        if(!app->ok_hold_triggered && app->ok_press_tick != 0 &&
+                           hold_ms < HOLD_SHOW_MS) {
+                            uint32_t timer_duration_seconds =
+                                app->cfg.timer_duration_hours * 3600;
+                            uint32_t now_tick = furi_get_tick();
                             uint32_t elapsed_seconds = app->elapsed_seconds;
                             if(app->running) {
-                                uint32_t elapsed_ms = current_tick - app->start_tick;
+                                uint32_t elapsed_ms = now_tick - app->start_tick;
                                 elapsed_seconds += (elapsed_ms / 1000);
                             }
                             float progress = (elapsed_seconds * 1000.0f + app->ms_adjust) /
@@ -450,7 +565,7 @@ int32_t clock_main(void* p) {
                             bool is_finished = (progress >= 1.0f);
 
                             if(is_finished) {
-                                // Timer finished: reset to set mode
+                                // Timer finished: reset to Shift mode
                                 app->has_been_started = false;
                                 app->running = false;
                                 app->elapsed_seconds = 0;
@@ -461,15 +576,27 @@ int32_t clock_main(void* p) {
                                 app->last_hour_played = 0;
                             } else if(app->running) {
                                 // Stop timer - accumulate elapsed time including milliseconds
-                                uint32_t elapsed_ms = current_tick - app->start_tick;
+                                uint32_t elapsed_ms = now_tick - app->start_tick;
                                 app->elapsed_seconds += (elapsed_ms / 1000);
                                 app->ms_adjust = elapsed_ms % 1000; // Store remaining milliseconds
                                 app->running = false;
+                                app->pause_start_tick = now_tick;
                             } else {
-                                // Record the real shift-start time only on the very first start;
-                                // resuming after a pause keeps the original anchor on the dial.
-                                if(!app->has_been_started) {
+                                bool is_resume = app->has_been_started;
+                                if(!is_resume) {
+                                    // Record the real shift-start time only on the very first
+                                    // start; resuming after a break keeps the original dial anchor
                                     app->start_wallclock_secs = rtc_now_seconds();
+                                } else {
+                                    // Breaks under a minute aren't worth showing as a gap -
+                                    // fold them straight into worked time instead
+                                    uint32_t break_ms = now_tick - app->pause_start_tick;
+                                    if(break_ms < BREAK_FOLD_MS) {
+                                        uint32_t ms_total = app->ms_adjust + (break_ms % 1000);
+                                        app->elapsed_seconds +=
+                                            break_ms / 1000 + ms_total / 1000;
+                                        app->ms_adjust = ms_total % 1000;
+                                    }
                                 }
                                 // Start timer - adjust start_tick to account for stored milliseconds
                                 app->has_been_started = true;
@@ -479,113 +606,15 @@ int32_t clock_main(void* p) {
                                 app->running = true;
                                 app->finish_sound_played = false; // Reset sound flag when starting
                             }
-                            furi_mutex_release(app->mutex);
-                            // Force update after state change (start/pause/finish)
-                            view_port_update(view_port);
                         }
-                    }
-                    break;
-                case InputKeyLeft:
-                    // Skip backward with adaptive amount based on hold duration
-                    // Use timeout to avoid blocking if draw callback is holding mutex
-                    if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        if(app->has_been_started) {
-                            // Track button press start time
-                            if(event.type == InputTypePress) {
-                                app->skip_left_press_tick = furi_get_tick();
-                                app->skip_left_active = true;
-                            }
-
-                            // Calculate hold duration from initial press
-                            uint32_t hold_duration = 0;
-                            if(app->skip_left_active && app->skip_left_press_tick > 0) {
-                                hold_duration = furi_get_tick() - app->skip_left_press_tick;
-                            }
-
-                            // Calculate skip amount based on hold duration
-                            uint32_t skip_seconds = calculate_skip_amount(hold_duration);
-
-                            // Accumulate current elapsed time first if running
-                            if(app->running) {
-                                uint32_t current_tick = furi_get_tick();
-                                uint32_t elapsed_ms = current_tick - app->start_tick;
-                                app->elapsed_seconds += (elapsed_ms / 1000);
-                                app->ms_adjust = elapsed_ms % 1000;
-                            }
-
-                            // Skip backward
-                            if(app->elapsed_seconds >= skip_seconds) {
-                                app->elapsed_seconds -= skip_seconds;
-                            } else {
-                                app->elapsed_seconds = 0;
-                                app->ms_adjust = 0;
-                            }
-
-                            // Reset start_tick if running
-                            if(app->running) {
-                                app->start_tick = furi_get_tick() - app->ms_adjust;
-                                app->ms_adjust = 0;
-                            }
-
-                            // Reset button tracking on release
-                            if(event.type == InputTypeRelease) {
-                                app->skip_left_active = false;
-                                app->skip_left_press_tick = 0;
-                            }
-                        }
+                        app->ok_press_tick = 0;
                         furi_mutex_release(app->mutex);
                     }
                     break;
-                case InputKeyRight:
-                    // Skip forward with adaptive amount based on hold duration
-                    // Use timeout to avoid blocking if draw callback is holding mutex
+                case InputKeyBack:
+                    // Releasing before the hold completes just cancels the close
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        if(app->has_been_started) {
-                            // Track button press start time
-                            if(event.type == InputTypePress) {
-                                app->skip_right_press_tick = furi_get_tick();
-                                app->skip_right_active = true;
-                            }
-
-                            // Calculate hold duration from initial press
-                            uint32_t hold_duration = 0;
-                            if(app->skip_right_active && app->skip_right_press_tick > 0) {
-                                hold_duration = furi_get_tick() - app->skip_right_press_tick;
-                            }
-
-                            // Calculate skip amount based on hold duration
-                            uint32_t skip_seconds = calculate_skip_amount(hold_duration);
-
-                            // Accumulate current elapsed time first if running
-                            if(app->running) {
-                                uint32_t current_tick = furi_get_tick();
-                                uint32_t elapsed_ms = current_tick - app->start_tick;
-                                app->elapsed_seconds += (elapsed_ms / 1000);
-                                app->ms_adjust = elapsed_ms % 1000;
-                            }
-
-                            // Skip forward
-                            app->elapsed_seconds += skip_seconds;
-
-                            // Check if we've exceeded the timer duration
-                            uint32_t timer_duration_seconds = app->cfg.timer_duration_hours * 3600;
-                            if(app->elapsed_seconds > timer_duration_seconds) {
-                                app->elapsed_seconds = timer_duration_seconds;
-                                app->ms_adjust = 0;
-                            }
-
-                            // Reset start_tick if running
-                            if(app->running) {
-                                app->start_tick = furi_get_tick() - app->ms_adjust;
-                                app->ms_adjust = 0;
-                            }
-
-                            // Reset button tracking on release
-                            if(event.type == InputTypeRelease) {
-                                app->skip_right_active = false;
-                                app->skip_right_press_tick = 0;
-                            }
-                        }
+                        app->back_press_tick = 0;
                         furi_mutex_release(app->mutex);
                     }
                     break;

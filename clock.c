@@ -1,6 +1,7 @@
 #include <math.h>
 
 #include "clock.h"
+#include "crock_o_dail_icons.h"
 
 #ifndef M_TWOPI
 #define M_TWOPI (2.0 * M_PI)
@@ -158,9 +159,9 @@ void draw_timer(
     uint16_t ms,
     bool running,
     bool has_been_started,
-    bool fill_enabled,
     uint32_t now_wallclock_secs,
-    uint32_t start_wallclock_secs) {
+    uint32_t start_wallclock_secs,
+    const UiOverlay* ui) {
     // Draw square 12-hour clock face on left side, real time always
     static char time_buf[10];
 
@@ -170,7 +171,7 @@ void draw_timer(
     // The hand always shows the real current time - one hand, no exceptions.
     float hand_angle = wallclock_angle(now_wallclock_secs);
 
-    if(has_been_started && fill_enabled) {
+    if(has_been_started) {
         // Worked segment: from shift start to how much has actually been worked (pauses excluded).
         float worked_start_angle = wallclock_angle(start_wallclock_secs);
         float worked_length = ((float)elapsed_seconds + ms / 1000.0f) / (12.0f * 3600.0f) *
@@ -233,40 +234,96 @@ void draw_timer(
     uint32_t remaining_ms =
         timer_duration_ms > total_elapsed_ms ? timer_duration_ms - total_elapsed_ms : 0;
 
-    // Convert to hours, minutes, seconds
+    // Convert to hours and minutes (seconds aren't shown)
     uint32_t remaining_seconds = remaining_ms / 1000;
     uint8_t hours = remaining_seconds / 3600;
     uint8_t minutes = (remaining_seconds % 3600) / 60;
-    uint8_t seconds = remaining_seconds % 60;
 
     // Format time string
-    snprintf(time_buf, 10, "%u:%02u:%02u", hours, minutes, seconds);
+    snprintf(time_buf, 10, "%u:%02u", hours, minutes);
 
     // Determine status
+    bool is_finished = total_elapsed_ms >= timer_duration_ms;
+    bool is_break = has_been_started && !running && !is_finished;
     const char* status;
     if(!has_been_started) {
-        status = "Set";
-    } else if(total_elapsed_ms >= timer_duration_ms) {
+        status = "Set shift";
+    } else if(is_finished) {
         status = "Finished";
     } else if(running) {
         status = "Working";
     } else {
-        status = "Paused";
+        status = "Break";
     }
 
     // Draw digital timer on right side (monospace font to prevent shifting)
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str_aligned(canvas, OFS_RIGHT_X, OFS_Y - 5, AlignCenter, AlignCenter, time_buf);
 
+    if(!has_been_started) {
+        // Left/right arrows flank the shift-length readout, hinting at the controls that adjust
+        // it. Positioned off a fixed reference width so they never move as the value changes.
+        uint16_t half_w = canvas_string_width(canvas, "12:00") / 2;
+        int32_t left_x = OFS_RIGHT_X - half_w - 6;
+        int32_t right_x = OFS_RIGHT_X + half_w + 2;
+        int32_t arrow_y = (OFS_Y - 5) - 3;
+        canvas_draw_icon(canvas, left_x, arrow_y, &I_arrow_left);
+        canvas_draw_icon(canvas, right_x, arrow_y, &I_arrow);
+    }
+
     // Draw status below timer
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str_aligned(canvas, OFS_RIGHT_X, OFS_Y + 8, AlignCenter, AlignCenter, status);
+
+    if(is_break) {
+        // Alternate frames once a second - draw callback already ticks at ~1Hz, so no
+        // separate animation timer is needed.
+        const Icon* coffee_icon = (now_wallclock_secs % 2 == 0) ? &I_coffee_1 : &I_coffee_2;
+        canvas_draw_icon(
+            canvas, OFS_RIGHT_X - icon_get_width(coffee_icon) / 2, OFS_Y + 15, coffee_icon);
+    }
+
+    if(ui->show_sound_icon) {
+        const Icon* sound_icon = ui->sound_enabled ? &I_sound_on : &I_sound_off;
+        canvas_draw_icon(canvas, 128 - 2 - icon_get_width(sound_icon), 2, sound_icon);
+    }
+
+    if(ui->show_backlight_icon) {
+        const Icon* backlight_icon = ui->backlight_on ? &I_light_on : &I_light_off;
+        int32_t bl_x = 128 - 2 - icon_get_width(backlight_icon);
+        int32_t bl_y = 64 - 2 - icon_get_height(backlight_icon);
+        canvas_draw_icon(canvas, bl_x, bl_y, backlight_icon);
+    }
+
+    if(ui->hold_active) {
+        // Overlay the bottom-right quadrant with a hold-to-confirm progress bar
+        float frac = ui->hold_fraction;
+        if(frac < 0.0f) frac = 0.0f;
+        if(frac > 1.0f) frac = 1.0f;
+        float eased = 0.5f * (1.0f - cosf(frac * (float)M_PI)); // ease-in-out sine
+
+        const uint8_t bar_y = 62;
+        const uint8_t bar_margin = 2;
+        int32_t bar_x0 = OFS_MID_X + 1 + bar_margin;
+        int32_t bar_x1 = 128 - bar_margin;
+        int32_t bar_width = bar_x1 - bar_x0;
+
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, OFS_MID_X + 1, 44, 128 - (OFS_MID_X + 1), 64 - 44);
+        canvas_set_color(canvas, ColorBlack);
+
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str_aligned(
+            canvas, OFS_RIGHT_X, bar_y - 8, AlignCenter, AlignCenter, ui->hold_label);
+        canvas_draw_box(canvas, bar_x0, bar_y, (int32_t)(bar_width * eased), 2);
+    }
 }
 
 void init_timer_config(TimerConfig* cfg) {
     cfg->version = CONFIG_VERSION;
     cfg->timer_duration_hours = DEFAULT_TIMER_HOURS; // Default 8 hours
-    cfg->fill_enabled = true; // Fill enabled by default
+    cfg->sound_enabled = true; // Sound enabled by default
+    cfg->backlight_on = true; // Backlight enforced on by default
 }
 
 void modify_timer_up(TimerConfig* cfg) {

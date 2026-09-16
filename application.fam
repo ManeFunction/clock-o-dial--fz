@@ -6,6 +6,7 @@ App(
     requires=["gui"],
     stack_size=1 * 1024,
     fap_icon="icons/app_10x10.png",
+    fap_icon_assets="images",
     fap_category="Tools",
     fap_author="Mane Function",
     fap_weburl="",

@@ -5,8 +5,18 @@
 #define OFS_LEFT_X          31
 #define FACE_RADIUS         31
 #define CLOCK_HOURS         12 // Dial is always a real 12-hour clock face
-#define MAX_TIMER_HOURS     24 // Max configurable shift length, in hours
+#define MAX_TIMER_HOURS     12 // Max configurable shift length, in hours
 #define DEFAULT_TIMER_HOURS 8
+
+// How long the OK/Back button must be held before it triggers reset/close. Closing from Set
+// mode (nothing running yet, so nothing to lose) only needs half as long a hold.
+#define HOLD_CONFIRM_MS 3000
+// Hold overlay (progress bar + label) only appears once the hold has run this long
+#define HOLD_SHOW_MS 300
+// How long the sound-on and backlight icons flash after their state changes
+#define ICON_FLASH_MS 5000
+// Breaks shorter than this are folded into worked time instead of leaving a visible gap
+#define BREAK_FOLD_MS 60000
 
 typedef enum {
     Normal = 0,
@@ -31,12 +41,25 @@ typedef struct {
     Line hour_marks[CLOCK_HOURS];
 } ClockFace;
 
-#define CONFIG_VERSION 8
+#define CONFIG_VERSION 10
 typedef struct {
     uint8_t version;
-    uint8_t timer_duration_hours; // Timer duration in hours (1-24)
-    bool fill_enabled; // Fill rendering enabled/disabled
+    uint8_t timer_duration_hours; // Shift duration in hours (1-12)
+    bool sound_enabled; // Hour chime + finish melody on/off
+    bool backlight_on; // Manual backlight toggle, available in every mode
 } TimerConfig;
+
+// Chrome/overlay state that isn't part of the clock's own timekeeping, prepared by the app
+// and handed to the renderer each frame.
+typedef struct {
+    bool sound_enabled;
+    bool show_sound_icon; // sound-off shows always while muted; sound-on flashes briefly
+    bool backlight_on;
+    bool show_backlight_icon; // flashes briefly after a backlight toggle, either state
+    bool hold_active; // a qualifying reset/close hold is in progress, past HOLD_SHOW_MS
+    float hold_fraction; // 0..1 linear progress toward HOLD_CONFIRM_MS (eased at draw time)
+    const char* hold_label; // "RESETTING" or "CLOSING"
+} UiOverlay;
 
 void calc_clock_face(ClockFace* face);
 void draw_timer(
@@ -47,9 +70,9 @@ void draw_timer(
     uint16_t ms,
     bool running,
     bool has_been_started,
-    bool fill_enabled,
     uint32_t now_wallclock_secs,
-    uint32_t start_wallclock_secs);
+    uint32_t start_wallclock_secs,
+    const UiOverlay* ui);
 
 void init_timer_config(TimerConfig* cfg);
 void modify_timer_up(TimerConfig* cfg);
