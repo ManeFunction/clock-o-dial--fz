@@ -151,6 +151,11 @@ static bool angle_in_forward_arc(float angle, float start, float length) {
     return delta < length;
 }
 
+// Forward duration in seconds from `from` to `to`, both seconds-of-day, wrapping past midnight.
+static uint32_t wallclock_span(uint32_t from, uint32_t to) {
+    return to >= from ? to - from : to + 86400 - from;
+}
+
 void draw_timer(
     Canvas* canvas,
     ClockFace* face,
@@ -161,6 +166,7 @@ void draw_timer(
     bool has_been_started,
     uint32_t now_wallclock_secs,
     uint32_t start_wallclock_secs,
+    const BreakLog* break_log,
     const UiOverlay* ui) {
     // Draw square 12-hour clock face on left side, real time always
     static char time_buf[10];
@@ -172,19 +178,43 @@ void draw_timer(
     float hand_angle = wallclock_angle(now_wallclock_secs);
 
     if(has_been_started) {
-        // Worked segment: from shift start to how much has actually been worked (pauses excluded).
-        float worked_start_angle = wallclock_angle(start_wallclock_secs);
-        float worked_length = ((float)elapsed_seconds + ms / 1000.0f) / (12.0f * 3600.0f) *
-                               M_TWOPI_F;
+        // History span: everything from shift start to now, work and breaks both. Each logged
+        // break gets carved out of it individually below, rather than showing one lumped gap.
+        float history_start_angle = wallclock_angle(start_wallclock_secs);
+        float history_length = (float)wallclock_span(start_wallclock_secs, now_wallclock_secs) /
+                                (12.0f * 3600.0f) * M_TWOPI_F;
 
         // Predicted segment: from now, for however much work remains at the current pace.
-        // While paused this starts sliding forward with real time (a gap opens up between the
-        // worked segment and it), which pushes the predicted finish time forward too.
+        // While on a break this starts sliding forward with real time, which pushes the
+        // predicted finish time forward too.
         uint32_t remaining_seconds =
             timer_duration_seconds > elapsed_seconds ? timer_duration_seconds - elapsed_seconds :
                                                         0;
         float predicted_start_angle = hand_angle;
         float predicted_length = (float)remaining_seconds / (12.0f * 3600.0f) * M_TWOPI_F;
+
+        // Precompute every break's angle/length once per frame rather than per pixel
+        float break_start_angles[MAX_BREAKS + 1];
+        float break_lengths[MAX_BREAKS + 1];
+        uint8_t break_angle_count = 0;
+        for(uint8_t i = 0; i < break_log->count && break_angle_count < MAX_BREAKS + 1; i++) {
+            break_start_angles[break_angle_count] =
+                wallclock_angle(break_log->items[i].start_wallclock_secs);
+            break_lengths[break_angle_count] =
+                (float)wallclock_span(
+                    break_log->items[i].start_wallclock_secs,
+                    break_log->items[i].end_wallclock_secs) /
+                (12.0f * 3600.0f) * M_TWOPI_F;
+            break_angle_count++;
+        }
+        if(break_log->live_active && break_angle_count < MAX_BREAKS + 1) {
+            break_start_angles[break_angle_count] =
+                wallclock_angle(break_log->live_start_wallclock_secs);
+            break_lengths[break_angle_count] =
+                (float)wallclock_span(break_log->live_start_wallclock_secs, now_wallclock_secs) /
+                (12.0f * 3600.0f) * M_TWOPI_F;
+            break_angle_count++;
+        }
 
         // Reduce fill area by a margin to avoid covering the tick marks
         uint8_t fill_margin = 5;
@@ -202,8 +232,16 @@ void draw_timer(
                 float pixel_angle = atan2f((float)x, (float)y);
                 if(pixel_angle < 0.0f) pixel_angle += M_TWOPI_F;
 
-                if(angle_in_forward_arc(pixel_angle, worked_start_angle, worked_length)) {
-                    canvas_draw_dot(canvas, OFS_LEFT_X + x, OFS_Y - y);
+                if(angle_in_forward_arc(pixel_angle, history_start_angle, history_length)) {
+                    bool in_break = false;
+                    for(uint8_t bi = 0; bi < break_angle_count; bi++) {
+                        if(angle_in_forward_arc(
+                               pixel_angle, break_start_angles[bi], break_lengths[bi])) {
+                            in_break = true;
+                            break;
+                        }
+                    }
+                    if(!in_break) canvas_draw_dot(canvas, OFS_LEFT_X + x, OFS_Y - y);
                 } else if(angle_in_forward_arc(pixel_angle, predicted_start_angle, predicted_length)) {
                     // Predicted pattern: sparse grid dither (a quarter of the pixels) - lets more
                     // light through than the worked pattern, since this time hasn't happened yet.

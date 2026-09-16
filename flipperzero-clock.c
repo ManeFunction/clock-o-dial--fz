@@ -9,9 +9,11 @@
 #include <notification/notification_messages.h>
 
 #include "clock.h"
+#include "app_data.h"
+#include "debug.h"
 
 // Seconds since local midnight, per the Flipper's real-time clock.
-static uint32_t rtc_now_seconds(void) {
+uint32_t rtc_now_seconds(void) {
     DateTime dt;
     furi_hal_rtc_get_datetime(&dt);
     return (uint32_t)dt.hour * 3600 + (uint32_t)dt.minute * 60 + dt.second;
@@ -28,27 +30,6 @@ static uint32_t rtc_now_seconds(void) {
 // Forward declarations
 static void play_rick_roll_melody(NotificationApp* notification);
 static void play_hour_chime(NotificationApp* notification);
-
-typedef struct {
-    FuriMutex* mutex;
-    TimerConfig cfg;
-    ClockFace face; // Runtime-only; the dial is a fixed 12-hour face, calculated once
-    bool running;
-    bool has_been_started;
-    uint32_t start_tick;
-    uint32_t start_wallclock_secs; // Real time-of-day when the current shift began
-    uint32_t elapsed_seconds;
-    uint16_t ms_adjust;
-    bool finish_sound_played; // Track if finish sound has been played
-    uint32_t last_hour_played; // Track last hour that played chime (to avoid repeats)
-    uint32_t pause_start_tick; // When the current break began, for the sub-minute fold-in
-    uint32_t sound_state_change_tick; // Drives the sound icon's 5s flash
-    uint32_t backlight_state_change_tick; // Drives the backlight icon's 5s flash
-    uint32_t ok_press_tick; // 0 when OK isn't currently held
-    bool ok_hold_triggered; // Reset already fired for the current hold
-    uint32_t back_press_tick; // 0 when Back isn't currently held
-    bool back_hold_triggered; // Close already fired for the current hold
-} AppData;
 
 static void set_backlight(NotificationApp* notification, bool on) {
     // Only toggle the always-on lock, never force it off directly - an explicit "off" fights
@@ -154,6 +135,17 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         }
     }
 
+    uint32_t timer_duration_ms_total = (uint32_t)app->cfg.timer_duration_hours * 3600 * 1000;
+    bool is_break = app->has_been_started && !app->running &&
+                    (elapsed_seconds * 1000 + ms) < timer_duration_ms_total;
+
+    BreakLog break_log = {
+        .items = app->breaks,
+        .count = app->break_count,
+        .live_active = is_break,
+        .live_start_wallclock_secs = app->pause_start_wallclock,
+    };
+
     UiOverlay ui = {
         .sound_enabled = app->cfg.sound_enabled,
         .show_sound_icon = !app->cfg.sound_enabled ||
@@ -176,6 +168,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         app->has_been_started,
         rtc_now_seconds(),
         app->start_wallclock_secs,
+        &break_log,
         &ui);
     furi_mutex_release(app->mutex);
 }
@@ -329,6 +322,8 @@ int32_t clock_main(void* p) {
     app->finish_sound_played = false;
     app->last_hour_played = 0;
     app->pause_start_tick = 0;
+    app->pause_start_wallclock = 0;
+    app->break_count = 0;
     // Far enough in the past that neither flash icon shows before an explicit toggle
     app->sound_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
     app->backlight_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
@@ -487,15 +482,17 @@ int32_t clock_main(void* p) {
                     break;
                 case InputKeyLeft:
                 case InputKeyRight:
-                    // Shift mode only: adjust the configured shift length
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
                         if(!app->has_been_started) {
+                            // Shift mode: adjust the configured shift length
                             if(event.key == InputKeyRight) {
                                 modify_timer_up(&app->cfg);
                             } else {
                                 modify_timer_down(&app->cfg);
                             }
                             cfg_save_internal(file, &app->cfg);
+                        } else if(event.key == InputKeyLeft && is_debug_device()) {
+                            debug_time_travel(app);
                         }
                         furi_mutex_release(app->mutex);
                     }
@@ -516,6 +513,7 @@ int32_t clock_main(void* p) {
                             app->ms_adjust = 0;
                             app->start_tick = 0;
                             app->start_wallclock_secs = 0;
+                            app->break_count = 0;
                             app->finish_sound_played = false;
                             app->ok_hold_triggered = true;
                         }
@@ -572,6 +570,7 @@ int32_t clock_main(void* p) {
                                 app->ms_adjust = 0;
                                 app->start_tick = 0;
                                 app->start_wallclock_secs = 0;
+                                app->break_count = 0;
                                 app->finish_sound_played = false;
                                 app->last_hour_played = 0;
                             } else if(app->running) {
@@ -581,6 +580,7 @@ int32_t clock_main(void* p) {
                                 app->ms_adjust = elapsed_ms % 1000; // Store remaining milliseconds
                                 app->running = false;
                                 app->pause_start_tick = now_tick;
+                                app->pause_start_wallclock = rtc_now_seconds();
                             } else {
                                 bool is_resume = app->has_been_started;
                                 if(!is_resume) {
@@ -588,14 +588,21 @@ int32_t clock_main(void* p) {
                                     // start; resuming after a break keeps the original dial anchor
                                     app->start_wallclock_secs = rtc_now_seconds();
                                 } else {
-                                    // Breaks under a minute aren't worth showing as a gap -
-                                    // fold them straight into worked time instead
+                                    // Breaks under a minute aren't worth logging - fold them
+                                    // straight into worked time instead. Longer ones get logged
+                                    // with their real start/end so the dial can show them.
                                     uint32_t break_ms = now_tick - app->pause_start_tick;
                                     if(break_ms < BREAK_FOLD_MS) {
                                         uint32_t ms_total = app->ms_adjust + (break_ms % 1000);
                                         app->elapsed_seconds +=
                                             break_ms / 1000 + ms_total / 1000;
                                         app->ms_adjust = ms_total % 1000;
+                                    } else if(app->break_count < MAX_BREAKS) {
+                                        app->breaks[app->break_count].start_wallclock_secs =
+                                            app->pause_start_wallclock;
+                                        app->breaks[app->break_count].end_wallclock_secs =
+                                            rtc_now_seconds();
+                                        app->break_count++;
                                     }
                                 }
                                 // Start timer - adjust start_tick to account for stored milliseconds

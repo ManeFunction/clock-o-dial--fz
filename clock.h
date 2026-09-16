@@ -17,6 +17,8 @@
 #define ICON_FLASH_MS 5000
 // Breaks shorter than this are folded into worked time instead of leaving a visible gap
 #define BREAK_FOLD_MS 60000
+// Max number of individually-logged breaks per shift; further breaks past this just aren't logged
+#define MAX_BREAKS 16
 
 typedef enum {
     Normal = 0,
@@ -61,6 +63,21 @@ typedef struct {
     const char* hold_label; // "RESETTING" or "CLOSING"
 } UiOverlay;
 
+// A single completed break, logged only once it's run at least BREAK_FOLD_MS.
+typedef struct {
+    uint32_t start_wallclock_secs;
+    uint32_t end_wallclock_secs;
+} BreakInterval;
+
+// The break history for the current shift, handed to the renderer so it can carve each break
+// out of the worked arc individually instead of showing one lumped trailing gap.
+typedef struct {
+    const BreakInterval* items;
+    uint8_t count;
+    bool live_active; // true if currently on a break that hasn't been logged yet (still ongoing)
+    uint32_t live_start_wallclock_secs; // valid only when live_active
+} BreakLog;
+
 void calc_clock_face(ClockFace* face);
 void draw_timer(
     Canvas* canvas,
@@ -72,6 +89,7 @@ void draw_timer(
     bool has_been_started,
     uint32_t now_wallclock_secs,
     uint32_t start_wallclock_secs,
+    const BreakLog* break_log,
     const UiOverlay* ui);
 
 void init_timer_config(TimerConfig* cfg);
