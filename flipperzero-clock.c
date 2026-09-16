@@ -146,12 +146,18 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         .live_start_wallclock_secs = app->pause_start_wallclock,
     };
 
+    bool eco_frozen = app->cfg.eco_mode_enabled &&
+                      (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
+
     UiOverlay ui = {
         .sound_enabled = app->cfg.sound_enabled,
         .show_sound_icon = !app->cfg.sound_enabled ||
                             (current_tick - app->sound_state_change_tick) < ICON_FLASH_MS,
         .backlight_on = app->cfg.backlight_on,
         .show_backlight_icon = (current_tick - app->backlight_state_change_tick) < ICON_FLASH_MS,
+        .eco_mode_enabled = app->cfg.eco_mode_enabled,
+        .show_eco_icon = (current_tick - app->eco_state_change_tick) < ICON_FLASH_MS,
+        .animations_frozen = eco_frozen,
         .hold_active = false,
         .hold_fraction = 0.0f,
         .hold_label = NULL,
@@ -205,6 +211,10 @@ static bool cfg_load(File* file, AppData* app) {
             // Version 10 added 'backlight_on' (previously runtime-only, not persisted)
             if(app->cfg.version < 10) {
                 app->cfg.backlight_on = true; // Default to enabled for old configs
+            }
+            // Version 11 added 'eco_mode_enabled'
+            if(app->cfg.version < 11) {
+                app->cfg.eco_mode_enabled = true; // Default to enabled for old configs
             }
             // Old configs will fail to load due to size mismatch and be recreated
             app->cfg.version = CONFIG_VERSION;
@@ -327,6 +337,9 @@ int32_t clock_main(void* p) {
     // Far enough in the past that neither flash icon shows before an explicit toggle
     app->sound_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
     app->backlight_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
+    app->eco_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
+    // The user just interacted with the device to launch the app, so start the idle clock now
+    app->last_activity_tick = furi_get_tick();
     app->ok_press_tick = 0;
     app->ok_hold_triggered = false;
     app->back_press_tick = 0;
@@ -437,9 +450,15 @@ int32_t clock_main(void* p) {
 
         // The dial always shows real time (and, once started, a growing pause gap), so it must
         // keep ticking once a second regardless of running state - no idle timeout to save on.
-        uint32_t queue_timeout = FRAME_MS_RUNNING;
+        // Eco mode is the one exception: once nobody's touched a button for a while, redraws
+        // (and this wait) stretch out to once a minute until the next button press.
+        bool eco_frozen = app->cfg.eco_mode_enabled &&
+                          (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
+        uint32_t frame_interval = eco_frozen ? ECO_FRAME_MS : FRAME_MS_RUNNING;
+        uint32_t queue_timeout = frame_interval;
 
         if(furi_message_queue_get(event_queue, &event, queue_timeout) == FuriStatusOk) {
+            app->last_activity_tick = furi_get_tick();
             if(event.key == InputKeyBack && event.sequence_source == INPUT_SEQUENCE_SOURCE_SOFTWARE) {
                 // A software/RPC-injected event (e.g. the Loader's "close app" request from
                 // `ufbt launch` or the app_close CLI command) - close immediately regardless
@@ -493,6 +512,11 @@ int32_t clock_main(void* p) {
                             cfg_save_internal(file, &app->cfg);
                         } else if(event.key == InputKeyLeft && is_debug_device()) {
                             debug_time_travel(app);
+                        } else if(event.key == InputKeyRight) {
+                            // Working/Break mode: toggle eco mode
+                            app->cfg.eco_mode_enabled = !app->cfg.eco_mode_enabled;
+                            app->eco_state_change_tick = furi_get_tick();
+                            cfg_save_internal(file, &app->cfg);
                         }
                         furi_mutex_release(app->mutex);
                     }
@@ -633,11 +657,11 @@ int32_t clock_main(void* p) {
             view_port_update(view_port);
         } else {
             // The real-time hand (and, while paused, the growing gap) needs to tick every
-            // second no matter the timer state - this app can no longer go fully idle.
+            // second no matter the timer state - unless eco mode has slowed things down above.
             static uint32_t last_update = 0;
             uint32_t now = furi_get_tick();
 
-            if((now - last_update) >= FRAME_MS_RUNNING) {
+            if((now - last_update) >= frame_interval) {
                 view_port_update(view_port);
                 last_update = now;
             }

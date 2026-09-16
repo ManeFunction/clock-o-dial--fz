@@ -19,6 +19,10 @@
 #define BREAK_FOLD_MS 60000
 // Max number of individually-logged breaks per shift; further breaks past this just aren't logged
 #define MAX_BREAKS 16
+// Eco mode: after this long with no button pressed, redraws slow down and animations freeze
+#define ECO_IDLE_MS 60000
+// Eco mode's slow redraw interval once idle (vs. the normal 1-per-second rate)
+#define ECO_FRAME_MS 60000
 
 // Segment fill geometry: a square inset from the dial's edge, sized so marks stay uncovered.
 #define FILL_MARGIN    5
@@ -60,12 +64,13 @@ typedef struct {
     uint16_t fill_pixel_count;
 } ClockFace;
 
-#define CONFIG_VERSION 10
+#define CONFIG_VERSION 11
 typedef struct {
     uint8_t version;
     uint8_t timer_duration_hours; // Shift duration in hours (1-12)
     bool sound_enabled; // Hour chime + finish melody on/off
     bool backlight_on; // Manual backlight toggle, available in every mode
+    bool eco_mode_enabled; // Slow down + freeze animations after a minute of inactivity
 } TimerConfig;
 
 // Chrome/overlay state that isn't part of the clock's own timekeeping, prepared by the app
@@ -75,6 +80,9 @@ typedef struct {
     bool show_sound_icon; // sound-off shows always while muted; sound-on flashes briefly
     bool backlight_on;
     bool show_backlight_icon; // flashes briefly after a backlight toggle, either state
+    bool eco_mode_enabled;
+    bool show_eco_icon; // flashes briefly after an eco mode toggle, either state
+    bool animations_frozen; // eco mode has kicked in after a minute idle - hold frame 1
     bool hold_active; // a qualifying reset/close hold is in progress, past HOLD_SHOW_MS
     float hold_fraction; // 0..1 linear progress toward HOLD_CONFIRM_MS (eased at draw time)
     const char* hold_label; // "RESETTING" or "CLOSING"

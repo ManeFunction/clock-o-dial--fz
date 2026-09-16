@@ -326,19 +326,19 @@ void draw_timer(
     // Both animations share a bottom edge regardless of their frame heights
     int32_t icon_bottom_y = OFS_Y + 15 + icon_get_height(&I_coffee_1);
 
+    // Alternate frames once a second - draw callback already ticks at ~1Hz, so no separate
+    // animation timer is needed. Eco mode freezes both on frame 1 after a minute of inactivity.
+    bool show_frame_2 = !ui->animations_frozen && (now_wallclock_secs % 2 != 0);
+
     if(is_working) {
-        // Alternate frames once a second - draw callback already ticks at ~1Hz, so no
-        // separate animation timer is needed.
-        const Icon* working_icon = (now_wallclock_secs % 2 == 0) ? &I_working_1 : &I_working_2;
+        const Icon* working_icon = show_frame_2 ? &I_working_2 : &I_working_1;
         canvas_draw_icon(
             canvas,
             OFS_RIGHT_X - icon_get_width(working_icon) / 2,
             icon_bottom_y - icon_get_height(working_icon),
             working_icon);
     } else if(is_break) {
-        // Alternate frames once a second - draw callback already ticks at ~1Hz, so no
-        // separate animation timer is needed.
-        const Icon* coffee_icon = (now_wallclock_secs % 2 == 0) ? &I_coffee_1 : &I_coffee_2;
+        const Icon* coffee_icon = show_frame_2 ? &I_coffee_2 : &I_coffee_1;
         canvas_draw_icon(
             canvas,
             OFS_RIGHT_X - icon_get_width(coffee_icon) / 2,
@@ -348,12 +348,21 @@ void draw_timer(
 
     if(ui->show_sound_icon) {
         const Icon* sound_icon = ui->sound_enabled ? &I_sound_on : &I_sound_off;
-        canvas_draw_icon(canvas, 128 - 2 - icon_get_width(sound_icon), 2, sound_icon);
+        canvas_draw_icon(canvas, 128 - icon_get_width(sound_icon), 2, sound_icon);
+    }
+
+    if(ui->show_eco_icon) {
+        // Right edge, vertically centered between the sound icon (top) and backlight icon
+        // (bottom).
+        const Icon* eco_icon = ui->eco_mode_enabled ? &I_eco_on : &I_eco_off;
+        int32_t eco_x = 128 - icon_get_width(eco_icon);
+        int32_t eco_y = (64 - icon_get_height(eco_icon)) / 2;
+        canvas_draw_icon(canvas, eco_x, eco_y, eco_icon);
     }
 
     if(ui->show_backlight_icon) {
         const Icon* backlight_icon = ui->backlight_on ? &I_light_on : &I_light_off;
-        int32_t bl_x = 128 - 2 - icon_get_width(backlight_icon);
+        int32_t bl_x = 128 - icon_get_width(backlight_icon);
         int32_t bl_y = 64 - 2 - icon_get_height(backlight_icon);
         canvas_draw_icon(canvas, bl_x, bl_y, backlight_icon);
     }
@@ -387,6 +396,7 @@ void init_timer_config(TimerConfig* cfg) {
     cfg->timer_duration_hours = DEFAULT_TIMER_HOURS; // Default 8 hours
     cfg->sound_enabled = true; // Sound enabled by default
     cfg->backlight_on = true; // Backlight enforced on by default
+    cfg->eco_mode_enabled = true; // Eco mode enabled by default
 }
 
 void modify_timer_up(TimerConfig* cfg) {
