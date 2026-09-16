@@ -244,6 +244,7 @@ void draw_timer(
 
     // Determine status
     bool is_finished = total_elapsed_ms >= timer_duration_ms;
+    bool is_working = running && !is_finished;
     bool is_break = has_been_started && !running && !is_finished;
     const char* status;
     if(!has_been_started) {
@@ -275,12 +276,27 @@ void draw_timer(
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str_aligned(canvas, OFS_RIGHT_X, OFS_Y + 8, AlignCenter, AlignCenter, status);
 
-    if(is_break) {
+    // Both animations share a bottom edge regardless of their frame heights
+    int32_t icon_bottom_y = OFS_Y + 15 + icon_get_height(&I_coffee_1);
+
+    if(is_working) {
+        // Alternate frames once a second - draw callback already ticks at ~1Hz, so no
+        // separate animation timer is needed.
+        const Icon* working_icon = (now_wallclock_secs % 2 == 0) ? &I_working_1 : &I_working_2;
+        canvas_draw_icon(
+            canvas,
+            OFS_RIGHT_X - icon_get_width(working_icon) / 2,
+            icon_bottom_y - icon_get_height(working_icon),
+            working_icon);
+    } else if(is_break) {
         // Alternate frames once a second - draw callback already ticks at ~1Hz, so no
         // separate animation timer is needed.
         const Icon* coffee_icon = (now_wallclock_secs % 2 == 0) ? &I_coffee_1 : &I_coffee_2;
         canvas_draw_icon(
-            canvas, OFS_RIGHT_X - icon_get_width(coffee_icon) / 2, OFS_Y + 15, coffee_icon);
+            canvas,
+            OFS_RIGHT_X - icon_get_width(coffee_icon) / 2,
+            icon_bottom_y - icon_get_height(coffee_icon),
+            coffee_icon);
     }
 
     if(ui->show_sound_icon) {
