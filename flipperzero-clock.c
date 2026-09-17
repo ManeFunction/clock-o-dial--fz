@@ -56,10 +56,12 @@ static uint32_t back_hold_required_ms(const AppData* app) {
 // or confirm - an option only confirms when its own icon is the one actually on screen right
 // now. Sound-off counts as always showing while muted (it never expires on its own), but
 // anything else that changed more recently still wins the slot over it until its own flash
-// expires.
+// expires. Mute can only be toggled while working/on break, so its icon (including the
+// persistent muted state) is hidden in Set mode too.
 static TopRightIconSlot current_top_right_icon_slot(const AppData* app, uint32_t now) {
-    bool sound_showing = !app->cfg.sound_enabled ||
-                          (now - app->sound_state_change_tick) < ICON_FLASH_MS;
+    bool sound_showing = app->has_been_started &&
+                          (!app->cfg.sound_enabled ||
+                           (now - app->sound_state_change_tick) < ICON_FLASH_MS);
     bool eco_showing = (now - app->eco_state_change_tick) < ICON_FLASH_MS;
     bool backlight_showing = (now - app->backlight_state_change_tick) < ICON_FLASH_MS;
     bool vibro_showing = (now - app->vibro_state_change_tick) < ICON_FLASH_MS;
