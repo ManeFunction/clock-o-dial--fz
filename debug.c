@@ -12,7 +12,6 @@ bool is_debug_device(void) {
 // Left, Left, Down, Right, Down, Left - entered as plain presses while a shift is active.
 static const InputKey debug_combo[] = {
     InputKeyLeft,
-    InputKeyLeft,
     InputKeyDown,
     InputKeyRight,
     InputKeyDown,
