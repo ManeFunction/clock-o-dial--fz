@@ -309,8 +309,6 @@ static void cfg_save(File* file, AppData* app) {
 // shift-end is still noticeable with sound, light, and/or vibro muted in any combination.
 static void
     play_rick_roll_melody(NotificationApp* notification, bool sound_enabled, bool vibro_enabled) {
-    UNUSED(notification);
-
 // Frequency constants for clarity
 #define NOTE_A4  440.0f
 #define NOTE_B4  493.88f
@@ -335,15 +333,17 @@ static void
     // Acquire speaker (similar to tracker_speaker_init)
     bool speaker_ready = sound_enabled && furi_hal_speaker_acquire(1000);
 
-    // Play each note with exact timing, blinking red and vibrating in step whether or not
+    // Play each note with exact timing, blinking blue and vibrating in step whether or not
     // sound plays
     for(int i = 0; i < 7; i++) {
-        furi_hal_light_set(LightRed, 255);
+        // Set/reset (not force-off) through the notification service, so the charging LED
+        // indicator gets its color back afterward instead of being left dark while plugged in.
+        notification_message_block(notification, &sequence_set_only_blue_255);
         if(vibro_enabled) furi_hal_vibro_on(true);
         if(speaker_ready) furi_hal_speaker_start(notes[i], 0.5f); // frequency, volume (0.5 = 50%)
         furi_delay_ms(durations[i]);
         if(speaker_ready) furi_hal_speaker_stop();
-        furi_hal_light_set(LightRed, 0);
+        notification_message_block(notification, &sequence_reset_blue);
         if(vibro_enabled) furi_hal_vibro_on(false);
         if(i < 6) {
             furi_delay_ms(pauses[i]); // Pause between notes
@@ -358,8 +358,6 @@ static void
 // The LED and vibro motor follow the same "tu-tum" rhythm independently of sound_enabled, so
 // hour milestones are still noticeable with sound, light, and/or vibro muted in any combination.
 static void play_hour_chime(NotificationApp* notification, bool sound_enabled, bool vibro_enabled) {
-    UNUSED(notification);
-
     // Low satisfying notes - ascending "tu-tum" for positive feel
     // First note: A2 (110.00 Hz) - "tu"
     // Second note: C3 (130.81 Hz) - "tum" (higher, more positive)
@@ -369,25 +367,27 @@ static void play_hour_chime(NotificationApp* notification, bool sound_enabled, b
     // Acquire speaker
     bool speaker_ready = sound_enabled && furi_hal_speaker_acquire(1000);
 
-    // Play first note "tu"
-    furi_hal_light_set(LightGreen, 255);
+    // Play first note "tu" - set/reset (not force-off) through the notification service, so the
+    // charging LED indicator gets its color back afterward instead of being left dark while
+    // plugged in.
+    notification_message_block(notification, &sequence_set_only_blue_255);
     if(vibro_enabled) furi_hal_vibro_on(true);
     if(speaker_ready) furi_hal_speaker_start(note1, 0.4f); // Lower volume for subtlety
     furi_delay_ms(150);
     if(speaker_ready) furi_hal_speaker_stop();
-    furi_hal_light_set(LightGreen, 0);
+    notification_message_block(notification, &sequence_reset_blue);
     if(vibro_enabled) furi_hal_vibro_on(false);
 
     // Short pause between notes
     furi_delay_ms(50);
 
     // Play second note "tum" (ascending)
-    furi_hal_light_set(LightGreen, 255);
+    notification_message_block(notification, &sequence_set_only_blue_255);
     if(vibro_enabled) furi_hal_vibro_on(true);
     if(speaker_ready) furi_hal_speaker_start(note2, 0.4f);
     furi_delay_ms(200); // Slightly longer for the "tum"
     if(speaker_ready) furi_hal_speaker_stop();
-    furi_hal_light_set(LightGreen, 0);
+    notification_message_block(notification, &sequence_reset_blue);
     if(vibro_enabled) furi_hal_vibro_on(false);
 
     if(speaker_ready) furi_hal_speaker_release();
