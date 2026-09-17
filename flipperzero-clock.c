@@ -28,8 +28,9 @@ uint32_t rtc_now_seconds(void) {
 #define FINISH_CHECK_THRESHOLD 60 // Only check frequently within last 60 seconds
 
 // Forward declarations
-static void play_rick_roll_melody(NotificationApp* notification, bool sound_enabled);
-static void play_hour_chime(NotificationApp* notification, bool sound_enabled);
+static void
+    play_rick_roll_melody(NotificationApp* notification, bool sound_enabled, bool vibro_enabled);
+static void play_hour_chime(NotificationApp* notification, bool sound_enabled, bool vibro_enabled);
 
 static void set_backlight(NotificationApp* notification, bool on) {
     // Only toggle the always-on lock, never force it off directly - an explicit "off" fights
@@ -49,16 +50,18 @@ static uint32_t back_hold_required_ms(const AppData* app) {
     return app->has_been_started ? HOLD_CONFIRM_MS : HOLD_CONFIRM_MS / 2;
 }
 
-// Eco and backlight share one status-icon slot; whichever changed most recently wins it. Used
-// both to decide what to render and, at input time, whether a press should reveal or confirm -
-// an option only confirms when its own icon is the one actually on screen right now. Sound-off
-// counts as always showing while muted (it never expires on its own), but anything else that
-// changed more recently still wins the slot over it until its own flash expires.
+// Sound, eco, backlight, and vibro share one status-icon slot; whichever changed most recently
+// wins it. Used both to decide what to render and, at input time, whether a press should reveal
+// or confirm - an option only confirms when its own icon is the one actually on screen right
+// now. Sound-off counts as always showing while muted (it never expires on its own), but
+// anything else that changed more recently still wins the slot over it until its own flash
+// expires.
 static TopRightIconSlot current_top_right_icon_slot(const AppData* app, uint32_t now) {
     bool sound_showing = !app->cfg.sound_enabled ||
                           (now - app->sound_state_change_tick) < ICON_FLASH_MS;
     bool eco_showing = (now - app->eco_state_change_tick) < ICON_FLASH_MS;
     bool backlight_showing = (now - app->backlight_state_change_tick) < ICON_FLASH_MS;
+    bool vibro_showing = (now - app->vibro_state_change_tick) < ICON_FLASH_MS;
 
     TopRightIconSlot winner = TopRightIconNone;
     uint32_t winner_tick = 0;
@@ -76,6 +79,11 @@ static TopRightIconSlot current_top_right_icon_slot(const AppData* app, uint32_t
     }
     if(backlight_showing && (!have_winner || app->backlight_state_change_tick >= winner_tick)) {
         winner = TopRightIconBacklight;
+        winner_tick = app->backlight_state_change_tick;
+        have_winner = true;
+    }
+    if(vibro_showing && (!have_winner || app->vibro_state_change_tick >= winner_tick)) {
+        winner = TopRightIconVibro;
         have_winner = true;
     }
     return have_winner ? winner : TopRightIconNone;
@@ -185,6 +193,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         .sound_enabled = app->cfg.sound_enabled,
         .backlight_on = app->cfg.backlight_on,
         .eco_mode_enabled = app->cfg.eco_mode_enabled,
+        .vibro_enabled = app->cfg.vibro_enabled,
         .top_right_icon_slot = current_top_right_icon_slot(app, current_tick),
         .animations_frozen = eco_frozen,
         .hold_active = false,
@@ -245,6 +254,10 @@ static bool cfg_load(File* file, AppData* app) {
             if(app->cfg.version < 11) {
                 app->cfg.eco_mode_enabled = true; // Default to enabled for old configs
             }
+            // Version 12 added 'vibro_enabled'
+            if(app->cfg.version < 12) {
+                app->cfg.vibro_enabled = true; // Default to enabled for old configs
+            }
             // Old configs will fail to load due to size mismatch and be recreated
             app->cfg.version = CONFIG_VERSION;
             // Ensure valid shift duration (range shrunk to 1-12 hours in version 9)
@@ -274,9 +287,10 @@ static void cfg_save(File* file, AppData* app) {
 // Rick Roll melody - "Never gonna give you up" opening phrase
 // Exact notes and timing to match the iconic melody
 // Based on tracker.c note_to_freq() logic and actual song timing
-// The LED blinks through the same note rhythm regardless of sound_enabled, so shift-end is
-// still noticeable while muted.
-static void play_rick_roll_melody(NotificationApp* notification, bool sound_enabled) {
+// The LED and vibro motor follow the same note rhythm independently of sound_enabled, so
+// shift-end is still noticeable with sound, light, and/or vibro muted in any combination.
+static void
+    play_rick_roll_melody(NotificationApp* notification, bool sound_enabled, bool vibro_enabled) {
     UNUSED(notification);
 
 // Frequency constants for clarity
@@ -303,13 +317,16 @@ static void play_rick_roll_melody(NotificationApp* notification, bool sound_enab
     // Acquire speaker (similar to tracker_speaker_init)
     bool speaker_ready = sound_enabled && furi_hal_speaker_acquire(1000);
 
-    // Play each note with exact timing, blinking red in step whether or not sound plays
+    // Play each note with exact timing, blinking red and vibrating in step whether or not
+    // sound plays
     for(int i = 0; i < 7; i++) {
         furi_hal_light_set(LightRed, 255);
+        if(vibro_enabled) furi_hal_vibro_on(true);
         if(speaker_ready) furi_hal_speaker_start(notes[i], 0.5f); // frequency, volume (0.5 = 50%)
         furi_delay_ms(durations[i]);
         if(speaker_ready) furi_hal_speaker_stop();
         furi_hal_light_set(LightRed, 0);
+        if(vibro_enabled) furi_hal_vibro_on(false);
         if(i < 6) {
             furi_delay_ms(pauses[i]); // Pause between notes
         }
@@ -320,9 +337,9 @@ static void play_rick_roll_melody(NotificationApp* notification, bool sound_enab
 
 // Play satisfying "tu-tum" chime for hourly milestones
 // Two low notes: ascending for positive feel
-// The LED blinks through the same "tu-tum" rhythm regardless of sound_enabled, so hour
-// milestones are still noticeable while muted.
-static void play_hour_chime(NotificationApp* notification, bool sound_enabled) {
+// The LED and vibro motor follow the same "tu-tum" rhythm independently of sound_enabled, so
+// hour milestones are still noticeable with sound, light, and/or vibro muted in any combination.
+static void play_hour_chime(NotificationApp* notification, bool sound_enabled, bool vibro_enabled) {
     UNUSED(notification);
 
     // Low satisfying notes - ascending "tu-tum" for positive feel
@@ -336,20 +353,24 @@ static void play_hour_chime(NotificationApp* notification, bool sound_enabled) {
 
     // Play first note "tu"
     furi_hal_light_set(LightGreen, 255);
+    if(vibro_enabled) furi_hal_vibro_on(true);
     if(speaker_ready) furi_hal_speaker_start(note1, 0.4f); // Lower volume for subtlety
     furi_delay_ms(150);
     if(speaker_ready) furi_hal_speaker_stop();
     furi_hal_light_set(LightGreen, 0);
+    if(vibro_enabled) furi_hal_vibro_on(false);
 
     // Short pause between notes
     furi_delay_ms(50);
 
     // Play second note "tum" (ascending)
     furi_hal_light_set(LightGreen, 255);
+    if(vibro_enabled) furi_hal_vibro_on(true);
     if(speaker_ready) furi_hal_speaker_start(note2, 0.4f);
     furi_delay_ms(200); // Slightly longer for the "tum"
     if(speaker_ready) furi_hal_speaker_stop();
     furi_hal_light_set(LightGreen, 0);
+    if(vibro_enabled) furi_hal_vibro_on(false);
 
     if(speaker_ready) furi_hal_speaker_release();
 }
@@ -376,6 +397,7 @@ int32_t clock_main(void* p) {
     app->sound_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
     app->backlight_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
     app->eco_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
+    app->vibro_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
     // The user just interacted with the device to launch the app, so start the idle clock now
     app->last_activity_tick = furi_get_tick();
     app->ok_press_tick = 0;
@@ -455,11 +477,13 @@ int32_t clock_main(void* p) {
                         app->finish_sound_played = true;
                         app->running = false;
                         bool sound_enabled = app->cfg.sound_enabled;
+                        bool vibro_enabled = app->cfg.vibro_enabled;
                         furi_mutex_release(app->mutex);
                         // Force update to show finished state
                         view_port_update(view_port);
-                        // Play sound/light outside of mutex - the LED still blinks even if muted
-                        play_rick_roll_melody(notification, sound_enabled);
+                        // Play sound/light/vibro outside of mutex - light and vibro still fire
+                        // even if muted
+                        play_rick_roll_melody(notification, sound_enabled, vibro_enabled);
                         // Re-acquire mutex for next iteration
                         continue;
                     }
@@ -475,9 +499,11 @@ int32_t clock_main(void* p) {
                     if(current_hour > 0 && current_hour != app->last_hour_played) {
                         app->last_hour_played = current_hour;
                         bool sound_enabled = app->cfg.sound_enabled;
+                        bool vibro_enabled = app->cfg.vibro_enabled;
                         furi_mutex_release(app->mutex);
-                        // Play hour chime outside of mutex - the LED still blinks even if muted
-                        play_hour_chime(notification, sound_enabled);
+                        // Play hour chime outside of mutex - light and vibro still fire even if
+                        // muted
+                        play_hour_chime(notification, sound_enabled, vibro_enabled);
                         // Re-acquire mutex for next iteration
                         continue;
                     }
@@ -508,7 +534,8 @@ int32_t clock_main(void* p) {
                 bool debug_just_unlocked =
                     app->has_been_started && debug_feed_combo_key(event.key);
                 if(debug_just_unlocked) {
-                    play_rick_roll_melody(notification, app->cfg.sound_enabled);
+                    play_rick_roll_melody(
+                        notification, app->cfg.sound_enabled, app->cfg.vibro_enabled);
                 }
                 switch(event.key) {
                 case InputKeyOk:
@@ -571,9 +598,24 @@ int32_t clock_main(void* p) {
                                 modify_timer_down(&app->cfg);
                             }
                             cfg_save_internal(file, &app->cfg);
-                        } else if(event.key == InputKeyLeft && !debug_just_unlocked &&
-                                  is_debug_mode_active()) {
-                            debug_time_travel(app);
+                        } else if(event.key == InputKeyLeft) {
+                            if(debug_just_unlocked) {
+                                // Consumed entirely by the unlock celebration
+                            } else if(is_debug_mode_active()) {
+                                debug_time_travel(app);
+                            } else {
+                                // Working/Break mode: toggle vibro. Same reveal-then-confirm
+                                // pattern as eco/backlight - first press just shows the
+                                // current state.
+                                uint32_t now = furi_get_tick();
+                                bool icon_visible =
+                                    current_top_right_icon_slot(app, now) == TopRightIconVibro;
+                                if(icon_visible) {
+                                    app->cfg.vibro_enabled = !app->cfg.vibro_enabled;
+                                    cfg_save_internal(file, &app->cfg);
+                                }
+                                app->vibro_state_change_tick = now;
+                            }
                         } else if(event.key == InputKeyRight) {
                             // Working/Break mode: toggle eco mode. Same reveal-then-confirm
                             // pattern as backlight - first press just shows the current state.

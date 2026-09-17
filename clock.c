@@ -344,9 +344,9 @@ void draw_timer(
             status_icon);
     }
 
-    // Sound, eco, and backlight all share one top-right slot; only one of the three is ever
-    // drawn at a time. Anchored to a shared center (derived from the widest/tallest of the
-    // three) so swapping between them never shifts position.
+    // Sound, eco, backlight, and vibro all share one top-right slot; only one of the four is
+    // ever drawn at a time. Anchored to a shared center (derived from the widest/tallest of the
+    // four) so swapping between them never shifts position.
     const Icon* top_right_icon = NULL;
     if(ui->top_right_icon_slot == TopRightIconSound) {
         top_right_icon = ui->sound_enabled ? &I_sound_on : &I_sound_off;
@@ -354,14 +354,18 @@ void draw_timer(
         top_right_icon = ui->eco_mode_enabled ? &I_eco_on : &I_eco_off;
     } else if(ui->top_right_icon_slot == TopRightIconBacklight) {
         top_right_icon = ui->backlight_on ? &I_light_on : &I_light_off;
+    } else if(ui->top_right_icon_slot == TopRightIconVibro) {
+        top_right_icon = ui->vibro_enabled ? &I_vibro_on : &I_vibro_off;
     }
     if(top_right_icon != NULL) {
         int32_t ref_w = icon_get_width(&I_sound_on);
         if(icon_get_width(&I_eco_on) > ref_w) ref_w = icon_get_width(&I_eco_on);
         if(icon_get_width(&I_light_on) > ref_w) ref_w = icon_get_width(&I_light_on);
+        if(icon_get_width(&I_vibro_on) > ref_w) ref_w = icon_get_width(&I_vibro_on);
         int32_t ref_h = icon_get_height(&I_sound_on);
         if(icon_get_height(&I_eco_on) > ref_h) ref_h = icon_get_height(&I_eco_on);
         if(icon_get_height(&I_light_on) > ref_h) ref_h = icon_get_height(&I_light_on);
+        if(icon_get_height(&I_vibro_on) > ref_h) ref_h = icon_get_height(&I_vibro_on);
         // Use ceil(ref_w/2) so the widest icon's right edge lands exactly on the screen edge
         // rather than one pixel past it when ref_w is odd.
         int32_t center_x = 128 - (ref_w + 1) / 2 - 1;
@@ -402,6 +406,7 @@ void init_timer_config(TimerConfig* cfg) {
     cfg->sound_enabled = true; // Sound enabled by default
     cfg->backlight_on = true; // Backlight enforced on by default
     cfg->eco_mode_enabled = true; // Eco mode enabled by default
+    cfg->vibro_enabled = true; // Vibro enabled by default
 }
 
 void modify_timer_up(TimerConfig* cfg) {

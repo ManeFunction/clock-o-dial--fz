@@ -21,6 +21,7 @@ typedef struct {
     uint32_t sound_state_change_tick; // Drives the sound icon's 5s flash
     uint32_t backlight_state_change_tick; // Drives the backlight icon's 5s flash
     uint32_t eco_state_change_tick; // Drives the eco icon's 5s flash
+    uint32_t vibro_state_change_tick; // Drives the vibro icon's 5s flash
     uint32_t last_activity_tick; // Last time any button was pressed, for eco mode's idle timer
     uint32_t ok_press_tick; // 0 when OK isn't currently held
     bool ok_hold_triggered; // Reset already fired for the current hold

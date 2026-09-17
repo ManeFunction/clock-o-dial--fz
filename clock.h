@@ -64,23 +64,25 @@ typedef struct {
     uint16_t fill_pixel_count;
 } ClockFace;
 
-#define CONFIG_VERSION 11
+#define CONFIG_VERSION 12
 typedef struct {
     uint8_t version;
     uint8_t timer_duration_hours; // Shift duration in hours (1-12)
     bool sound_enabled; // Hour chime + finish melody on/off
     bool backlight_on; // Manual backlight toggle, available in every mode
     bool eco_mode_enabled; // Slow down + freeze animations after a minute of inactivity
+    bool vibro_enabled; // Vibrate in sync with hour chime / finish melody
 } TimerConfig;
 
-// Sound, eco, and backlight icons all share one top-right slot; only one shows at a time,
-// whichever changed most recently (sound-off is the standing default while muted, since it
-// never expires on its own - anything else showing more recently still takes priority though).
+// Sound, eco, backlight, and vibro icons all share one top-right slot; only one shows at a
+// time, whichever changed most recently (sound-off is the standing default while muted, since
+// it never expires on its own - anything else showing more recently still takes priority though).
 typedef enum {
     TopRightIconNone,
     TopRightIconSound,
     TopRightIconEco,
     TopRightIconBacklight,
+    TopRightIconVibro,
 } TopRightIconSlot;
 
 // Chrome/overlay state that isn't part of the clock's own timekeeping, prepared by the app
@@ -89,6 +91,7 @@ typedef struct {
     bool sound_enabled;
     bool backlight_on;
     bool eco_mode_enabled;
+    bool vibro_enabled;
     TopRightIconSlot top_right_icon_slot;
     bool animations_frozen; // eco mode has kicked in after a minute idle - hold frame 1
     bool hold_active; // a qualifying reset/close hold is in progress, past HOLD_SHOW_MS
