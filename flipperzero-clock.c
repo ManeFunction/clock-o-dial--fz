@@ -11,6 +11,7 @@
 #include "clock.h"
 #include "app_data.h"
 #include "debug.h"
+#include "info_screen.h"
 
 // Seconds since local midnight, per the Flipper's real-time clock.
 uint32_t rtc_now_seconds(void) {
@@ -109,8 +110,13 @@ static bool
     uint32_t required_ms;
     if(app->ok_press_tick != 0 && !app->ok_hold_triggered) {
         hold_ms = now_tick - app->ok_press_tick;
-        required_ms = HOLD_CONFIRM_MS;
-        *label = "RESETTING";
+        if(app->has_been_started) {
+            required_ms = HOLD_CONFIRM_MS;
+            *label = "RESETTING";
+        } else {
+            required_ms = INFO_HOLD_MS;
+            *label = "INFO";
+        }
     } else if(app->back_press_tick != 0 && !app->back_hold_triggered) {
         hold_ms = now_tick - app->back_press_tick;
         required_ms = back_hold_required_ms(app);
@@ -132,6 +138,13 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
     uint32_t timeout_ms = app->running ? FRAME_MS_RUNNING : MUTEX_TIMEOUT_IDLE;
 
     if(furi_mutex_acquire(app->mutex, timeout_ms) != FuriStatusOk) return;
+
+    if(app->screen == ScreenInfo) {
+        uint8_t page = app->info_page;
+        furi_mutex_release(app->mutex);
+        draw_info_screen(canvas, page);
+        return;
+    }
 
     uint32_t current_tick = furi_get_tick();
     uint32_t elapsed_seconds = app->elapsed_seconds;
@@ -387,6 +400,8 @@ int32_t clock_main(void* p) {
     furi_assert(app);
 
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    app->screen = ScreenClock;
+    app->info_page = 0;
     app->running = false;
     app->has_been_started = false;
     app->elapsed_seconds = 0;
@@ -544,9 +559,12 @@ int32_t clock_main(void* p) {
                 }
                 switch(event.key) {
                 case InputKeyOk:
+                    // OK does nothing on the info pager - Back is still how you leave it.
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        app->ok_press_tick = furi_get_tick();
-                        app->ok_hold_triggered = false;
+                        if(app->screen != ScreenInfo) {
+                            app->ok_press_tick = furi_get_tick();
+                            app->ok_hold_triggered = false;
+                        }
                         furi_mutex_release(app->mutex);
                     }
                     break;
@@ -560,9 +578,11 @@ int32_t clock_main(void* p) {
                 case InputKeyUp:
                 case InputKeyDown:
                     // Set Shift mode: Up/Down instead switch the time format - that's the only
-                    // screen the format can be changed from.
+                    // screen the format can be changed from. No function on the info pager.
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        if(!app->has_been_started) {
+                        if(app->screen == ScreenInfo) {
+                            // No function here
+                        } else if(!app->has_been_started) {
                             app->cfg.long_time_format = !app->cfg.long_time_format;
                             cfg_save_internal(file, &app->cfg);
                         } else if(event.key == InputKeyUp) {
@@ -599,7 +619,15 @@ int32_t clock_main(void* p) {
                 case InputKeyLeft:
                 case InputKeyRight:
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        if(!app->has_been_started) {
+                        if(app->screen == ScreenInfo) {
+                            // Info pager: left/right cycle between pages
+                            if(event.key == InputKeyRight) {
+                                app->info_page = (app->info_page + 1) % INFO_PAGE_COUNT;
+                            } else {
+                                app->info_page =
+                                    (app->info_page + INFO_PAGE_COUNT - 1) % INFO_PAGE_COUNT;
+                            }
+                        } else if(!app->has_been_started) {
                             // Shift mode: adjust the configured shift length
                             if(event.key == InputKeyRight) {
                                 modify_timer_up(&app->cfg);
@@ -647,20 +675,29 @@ int32_t clock_main(void* p) {
                 switch(event.key) {
                 case InputKeyOk:
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        if(app->ok_press_tick != 0 && !app->ok_hold_triggered &&
-                           (furi_get_tick() - app->ok_press_tick) >= HOLD_CONFIRM_MS) {
-                            // Held long enough - reset back to Shift mode
-                            app->has_been_started = false;
-                            app->running = false;
-                            app->elapsed_seconds = 0;
-                            app->ms_adjust = 0;
-                            app->start_tick = 0;
-                            app->start_wallclock_secs = 0;
-                            app->pause_start_tick = 0;
-                            app->pause_start_wallclock = 0;
-                            app->break_count = 0;
-                            app->finish_sound_played = false;
-                            app->ok_hold_triggered = true;
+                        if(app->ok_press_tick != 0 && !app->ok_hold_triggered) {
+                            uint32_t required = app->has_been_started ? HOLD_CONFIRM_MS :
+                                                                         INFO_HOLD_MS;
+                            if((furi_get_tick() - app->ok_press_tick) >= required) {
+                                if(app->has_been_started) {
+                                    // Held long enough - reset back to Shift mode
+                                    app->has_been_started = false;
+                                    app->running = false;
+                                    app->elapsed_seconds = 0;
+                                    app->ms_adjust = 0;
+                                    app->start_tick = 0;
+                                    app->start_wallclock_secs = 0;
+                                    app->pause_start_tick = 0;
+                                    app->pause_start_wallclock = 0;
+                                    app->break_count = 0;
+                                    app->finish_sound_played = false;
+                                } else {
+                                    // Held long enough in Set mode - open the info/options pager
+                                    app->screen = ScreenInfo;
+                                    app->info_page = 0;
+                                }
+                                app->ok_hold_triggered = true;
+                            }
                         }
                         furi_mutex_release(app->mutex);
                     }
@@ -775,8 +812,13 @@ int32_t clock_main(void* p) {
                     }
                     break;
                 case InputKeyBack:
-                    // Releasing before the hold completes just cancels the close
+                    // Releasing before the hold completes just cancels the close - on the info
+                    // screen, a plain short tap instead returns to the clock (already in Set
+                    // mode, since that's the only mode the info screen is reachable from).
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
+                        if(!app->back_hold_triggered && app->screen == ScreenInfo) {
+                            app->screen = ScreenClock;
+                        }
                         app->back_press_tick = 0;
                         furi_mutex_release(app->mutex);
                     }

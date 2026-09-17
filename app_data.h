@@ -1,11 +1,14 @@
 #pragma once
 
 #include "clock.h"
+#include "info_screen.h"
 
 typedef struct {
     FuriMutex* mutex;
     TimerConfig cfg;
     ClockFace face; // Runtime-only; the dial is a fixed 12-hour face, calculated once
+    AppScreen screen;
+    uint8_t info_page; // Which page of the info/options pager is showing, when screen is that
     bool running;
     bool has_been_started;
     uint32_t start_tick;

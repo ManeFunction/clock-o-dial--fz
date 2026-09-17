@@ -11,6 +11,8 @@
 // How long the OK/Back button must be held before it triggers reset/close. Closing from Set
 // mode (nothing running yet, so nothing to lose) only needs half as long a hold.
 #define HOLD_CONFIRM_MS 3000
+// Holding OK in Set mode instead opens the info/options pager - needs only a quarter of the hold
+#define INFO_HOLD_MS (HOLD_CONFIRM_MS / 4)
 // Hold overlay (progress bar + label) only appears once the hold has run this long
 #define HOLD_SHOW_MS 300
 // How long the sound-on and backlight icons flash after their state changes
