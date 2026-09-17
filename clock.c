@@ -364,8 +364,8 @@ void draw_timer(
         if(icon_get_height(&I_light_on) > ref_h) ref_h = icon_get_height(&I_light_on);
         // Use ceil(ref_w/2) so the widest icon's right edge lands exactly on the screen edge
         // rather than one pixel past it when ref_w is odd.
-        int32_t center_x = 128 - (ref_w + 1) / 2;
-        int32_t center_y = 2 + ref_h / 2;
+        int32_t center_x = 128 - (ref_w + 1) / 2 - 1;
+        int32_t center_y = 2 + ref_h / 2 - 1;
 
         int32_t x = center_x - icon_get_width(top_right_icon) / 2;
         int32_t y = center_y - icon_get_height(top_right_icon) / 2;
