@@ -64,7 +64,7 @@ typedef struct {
     uint16_t fill_pixel_count;
 } ClockFace;
 
-#define CONFIG_VERSION 12
+#define CONFIG_VERSION 13
 typedef struct {
     uint8_t version;
     uint8_t timer_duration_hours; // Shift duration in hours (1-12)
@@ -72,6 +72,7 @@ typedef struct {
     bool backlight_on; // Manual backlight toggle, available in every mode
     bool eco_mode_enabled; // Slow down + freeze animations after a minute of inactivity
     bool vibro_enabled; // Vibrate in sync with hour chime / finish melody
+    bool long_time_format; // Show H:MM:SS instead of H:MM; only changeable in Set Shift mode
 } TimerConfig;
 
 // Sound, eco, backlight, and vibro icons all share one top-right slot; only one shows at a
@@ -92,8 +93,9 @@ typedef struct {
     bool backlight_on;
     bool eco_mode_enabled;
     bool vibro_enabled;
+    bool long_time_format;
     TopRightIconSlot top_right_icon_slot;
-    bool animations_frozen; // eco mode has kicked in after a minute idle - hold frame 1
+    bool animations_frozen; // eco mode has kicked in after a minute idle - hold frame 1/dashed secs
     bool hold_active; // a qualifying reset/close hold is in progress, past HOLD_SHOW_MS
     float hold_fraction; // 0..1 linear progress toward HOLD_CONFIRM_MS (eased at draw time)
     const char* hold_label; // "RESETTING" or "CLOSING"

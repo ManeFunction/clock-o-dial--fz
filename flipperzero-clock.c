@@ -194,6 +194,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         .backlight_on = app->cfg.backlight_on,
         .eco_mode_enabled = app->cfg.eco_mode_enabled,
         .vibro_enabled = app->cfg.vibro_enabled,
+        .long_time_format = app->cfg.long_time_format,
         .top_right_icon_slot = current_top_right_icon_slot(app, current_tick),
         .animations_frozen = eco_frozen,
         .hold_active = false,
@@ -257,6 +258,10 @@ static bool cfg_load(File* file, AppData* app) {
             // Version 12 added 'vibro_enabled'
             if(app->cfg.version < 12) {
                 app->cfg.vibro_enabled = true; // Default to enabled for old configs
+            }
+            // Version 13 added 'long_time_format'
+            if(app->cfg.version < 13) {
+                app->cfg.long_time_format = false; // Default to short format for old configs
             }
             // Old configs will fail to load due to size mismatch and be recreated
             app->cfg.version = CONFIG_VERSION;
@@ -553,37 +558,41 @@ int32_t clock_main(void* p) {
                     }
                     break;
                 case InputKeyUp:
-                    // Mute toggle works the same in every mode. Same reveal-then-confirm
-                    // pattern as backlight/eco - first press while its icon isn't showing just
-                    // reveals the current state. While muted, sound-off is always showing, so
-                    // a press then confirms (unmutes) immediately, same as any other press
-                    // aimed at an icon that's already on screen.
-                    if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        uint32_t now = furi_get_tick();
-                        bool icon_visible =
-                            current_top_right_icon_slot(app, now) == TopRightIconSound;
-                        if(icon_visible) {
-                            app->cfg.sound_enabled = !app->cfg.sound_enabled;
-                            cfg_save_internal(file, &app->cfg);
-                        }
-                        app->sound_state_change_tick = now;
-                        furi_mutex_release(app->mutex);
-                    }
-                    break;
                 case InputKeyDown:
-                    // Backlight toggle works the same in every mode. The first press while its
-                    // icon isn't showing just reveals the current state; press again while it's
-                    // showing to actually change it.
+                    // Set Shift mode: Up/Down instead switch the time format - that's the only
+                    // screen the format can be changed from.
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        uint32_t now = furi_get_tick();
-                        bool icon_visible =
-                            current_top_right_icon_slot(app, now) == TopRightIconBacklight;
-                        if(icon_visible) {
-                            app->cfg.backlight_on = !app->cfg.backlight_on;
-                            set_backlight(notification, app->cfg.backlight_on);
+                        if(!app->has_been_started) {
+                            app->cfg.long_time_format = !app->cfg.long_time_format;
                             cfg_save_internal(file, &app->cfg);
+                        } else if(event.key == InputKeyUp) {
+                            // Mute toggle works the same in every mode. Same reveal-then-confirm
+                            // pattern as backlight/eco - first press while its icon isn't showing
+                            // just reveals the current state. While muted, sound-off is always
+                            // showing, so a press then confirms (unmutes) immediately, same as
+                            // any other press aimed at an icon that's already on screen.
+                            uint32_t now = furi_get_tick();
+                            bool icon_visible =
+                                current_top_right_icon_slot(app, now) == TopRightIconSound;
+                            if(icon_visible) {
+                                app->cfg.sound_enabled = !app->cfg.sound_enabled;
+                                cfg_save_internal(file, &app->cfg);
+                            }
+                            app->sound_state_change_tick = now;
+                        } else {
+                            // Backlight toggle works the same in every mode. The first press
+                            // while its icon isn't showing just reveals the current state; press
+                            // again while it's showing to actually change it.
+                            uint32_t now = furi_get_tick();
+                            bool icon_visible =
+                                current_top_right_icon_slot(app, now) == TopRightIconBacklight;
+                            if(icon_visible) {
+                                app->cfg.backlight_on = !app->cfg.backlight_on;
+                                set_backlight(notification, app->cfg.backlight_on);
+                                cfg_save_internal(file, &app->cfg);
+                            }
+                            app->backlight_state_change_tick = now;
                         }
-                        app->backlight_state_change_tick = now;
                         furi_mutex_release(app->mutex);
                     }
                     break;

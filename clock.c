@@ -278,13 +278,23 @@ void draw_timer(
     uint32_t remaining_ms =
         timer_duration_ms > total_elapsed_ms ? timer_duration_ms - total_elapsed_ms : 0;
 
-    // Convert to hours and minutes (seconds aren't shown)
+    // Convert to hours, minutes, and (in long format) seconds
     uint32_t remaining_seconds = remaining_ms / 1000;
     uint8_t hours = remaining_seconds / 3600;
     uint8_t minutes = (remaining_seconds % 3600) / 60;
 
-    // Format time string
-    snprintf(time_buf, 10, "%u:%02u", hours, minutes);
+    // Format time string. Once eco mode has slowed redraws to once a minute, seconds aren't
+    // actually being tracked live anymore, so show placeholder dashes instead of a stale number.
+    if(ui->long_time_format) {
+        if(ui->animations_frozen) {
+            snprintf(time_buf, 10, "%u:%02u:--", hours, minutes);
+        } else {
+            uint8_t seconds = remaining_seconds % 60;
+            snprintf(time_buf, 10, "%u:%02u:%02u", hours, minutes, seconds);
+        }
+    } else {
+        snprintf(time_buf, 10, "%u:%02u", hours, minutes);
+    }
 
     // Determine status
     bool is_finished = total_elapsed_ms >= timer_duration_ms;
@@ -301,27 +311,53 @@ void draw_timer(
         status = "Break";
     }
 
-    // Draw digital timer on right side (monospace font to prevent shifting)
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str_aligned(canvas, OFS_RIGHT_X, OFS_Y - 5, AlignCenter, AlignCenter, time_buf);
-
     if(!has_been_started) {
-        // Left/right arrows flank the shift-length readout, hinting at the controls that adjust
-        // it. Positioned off a fixed reference width so they never move as the value changes.
-        // The width is font metrics for a constant string, so it's measured once and cached
-        // rather than re-measured every frame.
-        static uint16_t half_w = 0;
-        if(half_w == 0) half_w = canvas_string_width(canvas, "12:00") / 2;
+        // Set Shift layout: label on top, time near the bottom - left/right arrows (shift
+        // length) and up/down arrows (time format) surround the time readout on all four sides.
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, 17, AlignCenter, AlignCenter, status);
+
+        int32_t time_y = 40;
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, time_y, AlignCenter, AlignCenter, time_buf);
+
+        // Each format's reference width is measured once and cached, since the format itself
+        // can change at runtime (unlike the shift-length digits, which never change the format).
+        static uint16_t half_w_short = 0;
+        static uint16_t half_w_long = 0;
+        uint16_t half_w;
+        if(ui->long_time_format) {
+            if(half_w_long == 0) half_w_long = canvas_string_width(canvas, "12:00:00") / 2;
+            half_w = half_w_long;
+        } else {
+            if(half_w_short == 0) half_w_short = canvas_string_width(canvas, "12:00") / 2;
+            half_w = half_w_short;
+        }
         int32_t left_x = OFS_RIGHT_X - half_w - 6;
         int32_t right_x = OFS_RIGHT_X + half_w + 2;
-        int32_t arrow_y = (OFS_Y - 5) - 3;
-        canvas_draw_icon(canvas, left_x, arrow_y, &I_arrow_left);
-        canvas_draw_icon(canvas, right_x, arrow_y, &I_arrow);
-    }
+        int32_t lr_arrow_y = time_y - 3;
+        canvas_draw_icon(canvas, left_x, lr_arrow_y, &I_arrow_left);
+        canvas_draw_icon(canvas, right_x, lr_arrow_y, &I_arrow_right);
 
-    // Draw status below timer
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str_aligned(canvas, OFS_RIGHT_X, OFS_Y + 8, AlignCenter, AlignCenter, status);
+        // Up/down sit close to the text like left/right do, measured off the font's actual
+        // height instead of a guessed offset - moved up and given a bit more breathing room so
+        // the CLOSING hold-overlay (which starts at y=44) doesn't cover the time readout.
+        int32_t half_h = canvas_get_font_params(canvas, FontPrimary)->height / 2;
+        int32_t up_arrow_y = time_y - half_h - 3 - icon_get_height(&I_arrow_up);
+        int32_t down_arrow_y = time_y + half_h + 3;
+        canvas_draw_icon(
+            canvas, OFS_RIGHT_X - icon_get_width(&I_arrow_up) / 2, up_arrow_y, &I_arrow_up);
+        canvas_draw_icon(
+            canvas, OFS_RIGHT_X - icon_get_width(&I_arrow_down) / 2, down_arrow_y, &I_arrow_down);
+    } else {
+        // Working/Break/Finished layout: time on top, status below it (unchanged).
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str_aligned(
+            canvas, OFS_RIGHT_X, OFS_Y - 5, AlignCenter, AlignCenter, time_buf);
+
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, OFS_Y + 8, AlignCenter, AlignCenter, status);
+    }
 
     // Both animations share a bottom edge regardless of their frame heights
     int32_t icon_bottom_y = OFS_Y + 15 + icon_get_height(&I_coffee_1);
@@ -407,6 +443,7 @@ void init_timer_config(TimerConfig* cfg) {
     cfg->backlight_on = true; // Backlight enforced on by default
     cfg->eco_mode_enabled = true; // Eco mode enabled by default
     cfg->vibro_enabled = true; // Vibro enabled by default
+    cfg->long_time_format = false; // Short H:MM format by default
 }
 
 void modify_timer_up(TimerConfig* cfg) {
