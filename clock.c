@@ -330,14 +330,8 @@ void draw_timer(
     // animation timer is needed. Eco mode freezes both on frame 1 after a minute of inactivity.
     bool show_frame_2 = !ui->animations_frozen && (now_wallclock_secs % 2 != 0);
 
-    // Eco/backlight share the working/break animation's spot and take priority over it while
-    // flashing - pressing either button briefly replaces the animation with its status icon.
     const Icon* status_icon = NULL;
-    if(ui->status_icon_slot == StatusIconEco) {
-        status_icon = ui->eco_mode_enabled ? &I_eco_on : &I_eco_off;
-    } else if(ui->status_icon_slot == StatusIconBacklight) {
-        status_icon = ui->backlight_on ? &I_light_on : &I_light_off;
-    } else if(is_working) {
+    if(is_working) {
         status_icon = show_frame_2 ? &I_working_2 : &I_working_1;
     } else if(is_break) {
         status_icon = show_frame_2 ? &I_coffee_2 : &I_coffee_1;
@@ -350,9 +344,32 @@ void draw_timer(
             status_icon);
     }
 
-    if(ui->show_sound_icon) {
-        const Icon* sound_icon = ui->sound_enabled ? &I_sound_on : &I_sound_off;
-        canvas_draw_icon(canvas, 128 - icon_get_width(sound_icon), 2, sound_icon);
+    // Sound, eco, and backlight all share one top-right slot; only one of the three is ever
+    // drawn at a time. Anchored to a shared center (derived from the widest/tallest of the
+    // three) so swapping between them never shifts position.
+    const Icon* top_right_icon = NULL;
+    if(ui->top_right_icon_slot == TopRightIconSound) {
+        top_right_icon = ui->sound_enabled ? &I_sound_on : &I_sound_off;
+    } else if(ui->top_right_icon_slot == TopRightIconEco) {
+        top_right_icon = ui->eco_mode_enabled ? &I_eco_on : &I_eco_off;
+    } else if(ui->top_right_icon_slot == TopRightIconBacklight) {
+        top_right_icon = ui->backlight_on ? &I_light_on : &I_light_off;
+    }
+    if(top_right_icon != NULL) {
+        int32_t ref_w = icon_get_width(&I_sound_on);
+        if(icon_get_width(&I_eco_on) > ref_w) ref_w = icon_get_width(&I_eco_on);
+        if(icon_get_width(&I_light_on) > ref_w) ref_w = icon_get_width(&I_light_on);
+        int32_t ref_h = icon_get_height(&I_sound_on);
+        if(icon_get_height(&I_eco_on) > ref_h) ref_h = icon_get_height(&I_eco_on);
+        if(icon_get_height(&I_light_on) > ref_h) ref_h = icon_get_height(&I_light_on);
+        // Use ceil(ref_w/2) so the widest icon's right edge lands exactly on the screen edge
+        // rather than one pixel past it when ref_w is odd.
+        int32_t center_x = 128 - (ref_w + 1) / 2;
+        int32_t center_y = 2 + ref_h / 2;
+
+        int32_t x = center_x - icon_get_width(top_right_icon) / 2;
+        int32_t y = center_y - icon_get_height(top_right_icon) / 2;
+        canvas_draw_icon(canvas, x, y, top_right_icon);
     }
 
     if(ui->hold_active) {

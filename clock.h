@@ -73,24 +73,23 @@ typedef struct {
     bool eco_mode_enabled; // Slow down + freeze animations after a minute of inactivity
 } TimerConfig;
 
-// Eco and backlight icons share the working/break animation's slot, taking priority over it
-// while flashing; only one of the three (animation, eco, backlight) shows at a time.
+// Sound, eco, and backlight icons all share one top-right slot; only one shows at a time,
+// whichever changed most recently (sound-off is the standing default while muted, since it
+// never expires on its own - anything else showing more recently still takes priority though).
 typedef enum {
-    StatusIconAnimation, // the working/break animation, or nothing outside those modes
-    StatusIconEco,
-    StatusIconBacklight,
-} StatusIconSlot;
+    TopRightIconNone,
+    TopRightIconSound,
+    TopRightIconEco,
+    TopRightIconBacklight,
+} TopRightIconSlot;
 
 // Chrome/overlay state that isn't part of the clock's own timekeeping, prepared by the app
 // and handed to the renderer each frame.
 typedef struct {
     bool sound_enabled;
-    bool show_sound_icon; // sound-off shows always while muted; sound-on flashes briefly
     bool backlight_on;
     bool eco_mode_enabled;
-    // Which of eco/backlight (if either) is currently flashing in the shared status-icon slot -
-    // whichever changed most recently wins if both would otherwise be showing.
-    StatusIconSlot status_icon_slot;
+    TopRightIconSlot top_right_icon_slot;
     bool animations_frozen; // eco mode has kicked in after a minute idle - hold frame 1
     bool hold_active; // a qualifying reset/close hold is in progress, past HOLD_SHOW_MS
     float hold_fraction; // 0..1 linear progress toward HOLD_CONFIRM_MS (eased at draw time)

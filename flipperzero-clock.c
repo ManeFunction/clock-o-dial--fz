@@ -51,19 +51,34 @@ static uint32_t back_hold_required_ms(const AppData* app) {
 
 // Eco and backlight share one status-icon slot; whichever changed most recently wins it. Used
 // both to decide what to render and, at input time, whether a press should reveal or confirm -
-// an option only confirms when its own icon is the one actually on screen right now.
-static StatusIconSlot current_status_icon_slot(const AppData* app, uint32_t now) {
-    bool eco_flashing = (now - app->eco_state_change_tick) < ICON_FLASH_MS;
-    bool backlight_flashing = (now - app->backlight_state_change_tick) < ICON_FLASH_MS;
-    if(eco_flashing && backlight_flashing) {
-        return (app->eco_state_change_tick >= app->backlight_state_change_tick) ? StatusIconEco :
-                                                                                   StatusIconBacklight;
-    } else if(eco_flashing) {
-        return StatusIconEco;
-    } else if(backlight_flashing) {
-        return StatusIconBacklight;
+// an option only confirms when its own icon is the one actually on screen right now. Sound-off
+// counts as always showing while muted (it never expires on its own), but anything else that
+// changed more recently still wins the slot over it until its own flash expires.
+static TopRightIconSlot current_top_right_icon_slot(const AppData* app, uint32_t now) {
+    bool sound_showing = !app->cfg.sound_enabled ||
+                          (now - app->sound_state_change_tick) < ICON_FLASH_MS;
+    bool eco_showing = (now - app->eco_state_change_tick) < ICON_FLASH_MS;
+    bool backlight_showing = (now - app->backlight_state_change_tick) < ICON_FLASH_MS;
+
+    TopRightIconSlot winner = TopRightIconNone;
+    uint32_t winner_tick = 0;
+    bool have_winner = false;
+
+    if(sound_showing) {
+        winner = TopRightIconSound;
+        winner_tick = app->sound_state_change_tick;
+        have_winner = true;
     }
-    return StatusIconAnimation;
+    if(eco_showing && (!have_winner || app->eco_state_change_tick >= winner_tick)) {
+        winner = TopRightIconEco;
+        winner_tick = app->eco_state_change_tick;
+        have_winner = true;
+    }
+    if(backlight_showing && (!have_winner || app->backlight_state_change_tick >= winner_tick)) {
+        winner = TopRightIconBacklight;
+        have_winner = true;
+    }
+    return have_winner ? winner : TopRightIconNone;
 }
 
 static void adjust_shift_duration(AppData* app, File* file, bool increase) {
@@ -166,15 +181,11 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
     bool eco_frozen = app->cfg.eco_mode_enabled &&
                       (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
 
-    StatusIconSlot status_icon_slot = current_status_icon_slot(app, current_tick);
-
     UiOverlay ui = {
         .sound_enabled = app->cfg.sound_enabled,
-        .show_sound_icon = !app->cfg.sound_enabled ||
-                            (current_tick - app->sound_state_change_tick) < ICON_FLASH_MS,
         .backlight_on = app->cfg.backlight_on,
         .eco_mode_enabled = app->cfg.eco_mode_enabled,
-        .status_icon_slot = status_icon_slot,
+        .top_right_icon_slot = current_top_right_icon_slot(app, current_tick),
         .animations_frozen = eco_frozen,
         .hold_active = false,
         .hold_fraction = 0.0f,
@@ -515,11 +526,20 @@ int32_t clock_main(void* p) {
                     }
                     break;
                 case InputKeyUp:
-                    // Mute toggle works the same in every mode
+                    // Mute toggle works the same in every mode. Same reveal-then-confirm
+                    // pattern as backlight/eco - first press while its icon isn't showing just
+                    // reveals the current state. While muted, sound-off is always showing, so
+                    // a press then confirms (unmutes) immediately, same as any other press
+                    // aimed at an icon that's already on screen.
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        app->cfg.sound_enabled = !app->cfg.sound_enabled;
-                        app->sound_state_change_tick = furi_get_tick();
-                        cfg_save_internal(file, &app->cfg);
+                        uint32_t now = furi_get_tick();
+                        bool icon_visible =
+                            current_top_right_icon_slot(app, now) == TopRightIconSound;
+                        if(icon_visible) {
+                            app->cfg.sound_enabled = !app->cfg.sound_enabled;
+                            cfg_save_internal(file, &app->cfg);
+                        }
+                        app->sound_state_change_tick = now;
                         furi_mutex_release(app->mutex);
                     }
                     break;
@@ -530,7 +550,7 @@ int32_t clock_main(void* p) {
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
                         uint32_t now = furi_get_tick();
                         bool icon_visible =
-                            current_status_icon_slot(app, now) == StatusIconBacklight;
+                            current_top_right_icon_slot(app, now) == TopRightIconBacklight;
                         if(icon_visible) {
                             app->cfg.backlight_on = !app->cfg.backlight_on;
                             set_backlight(notification, app->cfg.backlight_on);
@@ -558,7 +578,8 @@ int32_t clock_main(void* p) {
                             // Working/Break mode: toggle eco mode. Same reveal-then-confirm
                             // pattern as backlight - first press just shows the current state.
                             uint32_t now = furi_get_tick();
-                            bool icon_visible = current_status_icon_slot(app, now) == StatusIconEco;
+                            bool icon_visible =
+                                current_top_right_icon_slot(app, now) == TopRightIconEco;
                             if(icon_visible) {
                                 app->cfg.eco_mode_enabled = !app->cfg.eco_mode_enabled;
                                 cfg_save_internal(file, &app->cfg);
