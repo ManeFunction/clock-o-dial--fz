@@ -27,6 +27,7 @@ uint32_t rtc_now_seconds(void) {
 #define MUTEX_TIMEOUT_IDLE     100 // Short timeout when idle (draw callback won't be called often)
 #define FINISH_CHECK_INTERVAL  1000 // Check finish every second when close
 #define FINISH_CHECK_THRESHOLD 60 // Only check frequently within last 60 seconds
+#define HOLD_PROGRESS_FRAME_MS (1000 / 12) // ~12fps while a hold's progress bar is filling
 
 // Forward declarations
 static void
@@ -534,14 +535,32 @@ int32_t clock_main(void* p) {
             furi_mutex_release(app->mutex);
         }
 
-        // The dial always shows real time (and, once started, a growing pause gap), so it must
-        // keep ticking once a second regardless of running state - no idle timeout to save on.
-        // Eco mode is the one exception: once nobody's touched a button for a while, redraws
-        // (and this wait) stretch out to once a minute until the next button press.
-        bool eco_frozen = app->cfg.eco_mode_enabled &&
-                          (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
-        uint32_t frame_interval = eco_frozen ? ECO_FRAME_MS : FRAME_MS_RUNNING;
-        uint32_t queue_timeout = frame_interval;
+        // Redraw cadence, cheapest case first:
+        // - A hold's progress bar is filling: redraw fast, in any screen/mode, so it looks smooth.
+        // - The info pager: nothing on it animates, so only user input should wake this loop.
+        // - Set mode: the configured duration never changes on its own, so a slow fixed cadence
+        //   is enough regardless of eco mode or time format - user input still redraws instantly.
+        // - Working/break/finished: the dial and elapsed time tick in real time, so redraw at
+        //   1Hz, unless eco mode has slowed things down after a period of inactivity.
+        bool hold_in_progress = (app->ok_press_tick != 0 && !app->ok_hold_triggered) ||
+                                (app->back_press_tick != 0 && !app->back_hold_triggered);
+        uint32_t frame_interval;
+        uint32_t queue_timeout;
+        if(hold_in_progress) {
+            frame_interval = HOLD_PROGRESS_FRAME_MS;
+            queue_timeout = frame_interval;
+        } else if(app->screen == ScreenInfo) {
+            frame_interval = 0; // unused - queue_timeout never times out, so this never gets read
+            queue_timeout = FuriWaitForever;
+        } else if(!app->has_been_started) {
+            frame_interval = ECO_FRAME_MS; // reuse the same once-a-minute cadence as eco mode
+            queue_timeout = frame_interval;
+        } else {
+            bool eco_frozen = app->cfg.eco_mode_enabled &&
+                              (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
+            frame_interval = eco_frozen ? ECO_FRAME_MS : FRAME_MS_RUNNING;
+            queue_timeout = frame_interval;
+        }
 
         if(furi_message_queue_get(event_queue, &event, queue_timeout) == FuriStatusOk) {
             app->last_activity_tick = furi_get_tick();

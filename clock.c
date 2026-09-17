@@ -285,8 +285,10 @@ void draw_timer(
 
     // Format time string. Once eco mode has slowed redraws to once a minute, seconds aren't
     // actually being tracked live anymore, so show placeholder dashes instead of a stale number.
+    // In Set mode nothing is ticking in the first place - the configured duration always has
+    // exact, correct (":00") seconds, so there's never anything stale to dash out there.
     if(ui->long_time_format) {
-        if(ui->animations_frozen) {
+        if(ui->animations_frozen && has_been_started) {
             snprintf(time_buf, 10, "%u:%02u:--", hours, minutes);
         } else {
             uint8_t seconds = remaining_seconds % 60;
