@@ -9,7 +9,7 @@ App(
     fap_icon_assets="images",
     fap_category="Tools",
     fap_author="Mane Function",
-    fap_weburl="",
+    fap_weburl="https://github.com/ManeFunction/clock-o-dial--fz",
     fap_version="1.0",
-    fap_description="Clock out before burnout!",
+    fap_description="A tiny app that helps you keep track of your workday and avoid overtime.",
 )
