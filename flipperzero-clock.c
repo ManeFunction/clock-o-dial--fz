@@ -60,33 +60,46 @@ static uint32_t back_hold_required_ms(const AppData* app) {
 // expires. Mute can only be toggled while working/on break, so its icon (including the
 // persistent muted state) is hidden in Set mode too.
 static TopRightIconSlot current_top_right_icon_slot(const AppData* app, uint32_t now) {
+    // Elapsed-since-change, not the raw ticks themselves - the ticks start out at a huge
+    // underflowed sentinel (see clock_main's init) so a fresh boot reads as "long ago" once
+    // subtracted from `now`. Comparing the raw tick values against each other instead would see
+    // that sentinel as enormous rather than old, letting a never-touched icon's tick beat a real
+    // one that just changed.
+    uint32_t sound_elapsed = now - app->sound_state_change_tick;
+    uint32_t eco_elapsed = now - app->eco_state_change_tick;
+    uint32_t backlight_elapsed = now - app->backlight_state_change_tick;
+    uint32_t vibro_elapsed = now - app->vibro_state_change_tick;
+
     bool sound_showing = app->has_been_started &&
-                          (!app->cfg.sound_enabled ||
-                           (now - app->sound_state_change_tick) < ICON_FLASH_MS);
-    bool eco_showing = (now - app->eco_state_change_tick) < ICON_FLASH_MS;
-    bool backlight_showing = (now - app->backlight_state_change_tick) < ICON_FLASH_MS;
-    bool vibro_showing = (now - app->vibro_state_change_tick) < ICON_FLASH_MS;
+                          (!app->cfg.sound_enabled || sound_elapsed < ICON_FLASH_MS);
+    bool eco_showing = eco_elapsed < ICON_FLASH_MS;
+    bool backlight_showing = backlight_elapsed < ICON_FLASH_MS;
+    bool vibro_showing = vibro_elapsed < ICON_FLASH_MS;
 
     TopRightIconSlot winner = TopRightIconNone;
-    uint32_t winner_tick = 0;
+    uint32_t winner_elapsed = 0;
     bool have_winner = false;
 
     if(sound_showing) {
         winner = TopRightIconSound;
-        winner_tick = app->sound_state_change_tick;
+        // Plain elapsed time, same as the other three: a mute that's actually been sitting
+        // untouched keeps growing and naturally loses ties to a genuinely recent press of
+        // something else, while a fresh press of Up (reveal or confirm) resets this to ~0 and
+        // fairly competes for/wins the slot just like any other icon's own fresh press would.
+        winner_elapsed = sound_elapsed;
         have_winner = true;
     }
-    if(eco_showing && (!have_winner || app->eco_state_change_tick >= winner_tick)) {
+    if(eco_showing && (!have_winner || eco_elapsed <= winner_elapsed)) {
         winner = TopRightIconEco;
-        winner_tick = app->eco_state_change_tick;
+        winner_elapsed = eco_elapsed;
         have_winner = true;
     }
-    if(backlight_showing && (!have_winner || app->backlight_state_change_tick >= winner_tick)) {
+    if(backlight_showing && (!have_winner || backlight_elapsed <= winner_elapsed)) {
         winner = TopRightIconBacklight;
-        winner_tick = app->backlight_state_change_tick;
+        winner_elapsed = backlight_elapsed;
         have_winner = true;
     }
-    if(vibro_showing && (!have_winner || app->vibro_state_change_tick >= winner_tick)) {
+    if(vibro_showing && (!have_winner || vibro_elapsed <= winner_elapsed)) {
         winner = TopRightIconVibro;
         have_winner = true;
     }
