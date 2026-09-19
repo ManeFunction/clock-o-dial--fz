@@ -9,7 +9,7 @@ bool is_debug_device(void) {
     return strcmp(furi_hal_version_get_name_ptr(), DEBUG_DEVICE_NAME) == 0;
 }
 
-// Left, Left, Down, Right, Down, Left - entered as plain presses while a shift is active.
+// Left, Down, Right, Down, Left - entered as plain presses while a shift is active.
 static const InputKey debug_combo[] = {
     InputKeyLeft,
     InputKeyDown,
