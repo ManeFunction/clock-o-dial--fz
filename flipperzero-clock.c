@@ -175,8 +175,12 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         ms = app->ms_adjust;
     }
 
-    // Only check finish in draw callback if very close (optimization)
-    // Main loop handles finish detection for better battery life
+    // Once progress reaches 1.0, clamp the *locally displayed* elapsed time so the screen shows
+    // the finished state instantly instead of waiting for the main loop's next throttled check.
+    // This must never mutate app->elapsed_seconds/finish_sound_played/running itself - the main
+    // loop is the sole authority for that transition and for playing the finish melody; if this
+    // draw callback also flipped finish_sound_played, whichever of the two won the race would
+    // silently swallow it, and only the main loop's path actually plays the melody.
     if(app->running && !app->finish_sound_played) {
         uint32_t timer_duration_seconds = app->cfg.timer_duration_hours * 3600;
         uint32_t remaining = timer_duration_seconds > elapsed_seconds ?
@@ -187,19 +191,10 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         if(remaining <= FINISH_CHECK_THRESHOLD) {
             float total_ms = elapsed_seconds * 1000.0f + ms;
             float progress = total_ms / (timer_duration_seconds * 1000.0f);
-            bool is_finished = (progress >= 1.0f && app->has_been_started);
 
-            if(is_finished) {
-                // Accumulate final elapsed time and cap at timer duration
-                uint32_t elapsed_ms = current_tick - app->start_tick;
-                app->elapsed_seconds += (elapsed_ms / 1000);
-                app->ms_adjust = elapsed_ms % 1000;
-                if(app->elapsed_seconds > timer_duration_seconds) {
-                    app->elapsed_seconds = timer_duration_seconds;
-                    app->ms_adjust = 0;
-                }
-                app->finish_sound_played = true;
-                app->running = false;
+            if(progress >= 1.0f && app->has_been_started) {
+                elapsed_seconds = timer_duration_seconds;
+                ms = 0;
             }
         }
     }
@@ -256,55 +251,64 @@ static void app_input_callback(InputEvent* input_event, void* ctx) {
 }
 
 static bool cfg_load(File* file, AppData* app) {
+    // Always start from known-good defaults (8-hour shift, every option at its documented
+    // default) before touching the file, so a missing file, a truncated/corrupted one, or one
+    // whose version byte happens to land on or past CONFIG_VERSION by chance can never leave any
+    // field holding a garbage value - only a fully-read config overrides these below, and even
+    // then only with values that pass the range check further down.
+    init_timer_config(&app->cfg);
+
     size_t readed = 0;
+    TimerConfig loaded;
     if(storage_file_open(file, CFG_FILENAME, FSAM_READ, FSOM_OPEN_EXISTING))
-        readed = storage_file_read(file, &app->cfg, sizeof(TimerConfig));
+        readed = storage_file_read(file, &loaded, sizeof(TimerConfig));
     storage_file_close(file);
 
-    if(readed == sizeof(TimerConfig)) {
-        // Handle config version migration
-        if(app->cfg.version < CONFIG_VERSION) {
-            // Migrate from old versions
-            if(app->cfg.version < 4) {
-                // Old versions had digits_mod, migrate to timer_duration_hours
-                app->cfg.timer_duration_hours = DEFAULT_TIMER_HOURS;
-            }
-            // Version 4 had 'width' field which was removed in version 5
-            // Version 5 had 'ofs_x' field which was removed in version 6 (always OFS_LEFT_X)
-            // Version 6 had 'face' field which was removed in version 7 (recalculated from timer_duration_hours)
-            // Version 7 didn't have 'fill_enabled' field, added in version 8
-            // Version 8's 'fill_enabled' was replaced by 'sound_enabled' in version 9 (segments
-            // are always shown now; sound can be muted instead)
-            if(app->cfg.version < 9) {
-                app->cfg.sound_enabled = true; // Default to enabled for old configs
-            }
-            // Version 10 added 'backlight_on' (previously runtime-only, not persisted)
-            if(app->cfg.version < 10) {
-                app->cfg.backlight_on = true; // Default to enabled for old configs
-            }
-            // Version 11 added 'eco_mode_enabled'
-            if(app->cfg.version < 11) {
-                app->cfg.eco_mode_enabled = true; // Default to enabled for old configs
-            }
-            // Version 12 added 'vibro_enabled'
-            if(app->cfg.version < 12) {
-                app->cfg.vibro_enabled = true; // Default to enabled for old configs
-            }
-            // Version 13 added 'long_time_format'
-            if(app->cfg.version < 13) {
-                app->cfg.long_time_format = false; // Default to short format for old configs
-            }
-            // Old configs will fail to load due to size mismatch and be recreated
-            app->cfg.version = CONFIG_VERSION;
-            // Ensure valid shift duration (range shrunk to 1-12 hours in version 9)
-            if(app->cfg.timer_duration_hours < 1 ||
-               app->cfg.timer_duration_hours > MAX_TIMER_HOURS) {
-                app->cfg.timer_duration_hours = DEFAULT_TIMER_HOURS;
-            }
+    if(readed != sizeof(TimerConfig)) return false;
+    app->cfg = loaded;
+
+    // Handle config version migration
+    if(app->cfg.version < CONFIG_VERSION) {
+        // Migrate from old versions
+        if(app->cfg.version < 4) {
+            // Old versions had digits_mod, migrate to timer_duration_hours
+            app->cfg.timer_duration_hours = DEFAULT_TIMER_HOURS;
         }
-        return true;
+        // Version 4 had 'width' field which was removed in version 5
+        // Version 5 had 'ofs_x' field which was removed in version 6 (always OFS_LEFT_X)
+        // Version 6 had 'face' field which was removed in version 7 (recalculated from timer_duration_hours)
+        // Version 7 didn't have 'fill_enabled' field, added in version 8
+        // Version 8's 'fill_enabled' was replaced by 'sound_enabled' in version 9 (segments
+        // are always shown now; sound can be muted instead)
+        if(app->cfg.version < 9) {
+            app->cfg.sound_enabled = true; // Default to enabled for old configs
+        }
+        // Version 10 added 'backlight_on' (previously runtime-only, not persisted)
+        if(app->cfg.version < 10) {
+            app->cfg.backlight_on = true; // Default to enabled for old configs
+        }
+        // Version 11 added 'eco_mode_enabled'
+        if(app->cfg.version < 11) {
+            app->cfg.eco_mode_enabled = true; // Default to enabled for old configs
+        }
+        // Version 12 added 'vibro_enabled'
+        if(app->cfg.version < 12) {
+            app->cfg.vibro_enabled = true; // Default to enabled for old configs
+        }
+        // Version 13 added 'long_time_format'
+        if(app->cfg.version < 13) {
+            app->cfg.long_time_format = false; // Default to short format for old configs
+        }
+        // Old configs will fail to load due to size mismatch and be recreated
+        app->cfg.version = CONFIG_VERSION;
     }
-    return false;
+    // Always validate, regardless of whether migration ran above - a corrupted-but-right-sized
+    // file could otherwise carry an out-of-range value straight through untouched if its version
+    // byte happened to already read as CONFIG_VERSION or higher.
+    if(app->cfg.timer_duration_hours < 1 || app->cfg.timer_duration_hours > MAX_TIMER_HOURS) {
+        app->cfg.timer_duration_hours = DEFAULT_TIMER_HOURS;
+    }
+    return true;
 }
 
 static void cfg_save_internal(File* file, TimerConfig* cfg) {
@@ -448,7 +452,7 @@ int32_t clock_main(void* p) {
     File* file = storage_file_alloc(storage);
 
     if(!cfg_load(file, app)) {
-        init_timer_config(&app->cfg);
+        // cfg_load already left app->cfg at its defaults - just persist them for next boot.
         cfg_save(file, app);
     }
     // The dial is a fixed 12-hour clock face, independent of shift duration
@@ -728,6 +732,7 @@ int32_t clock_main(void* p) {
                                     app->pause_start_wallclock = 0;
                                     app->break_count = 0;
                                     app->finish_sound_played = false;
+                                    app->last_hour_played = 0;
                                 } else {
                                     // Held long enough in Set mode - open the info/options pager
                                     app->screen = ScreenInfo;
