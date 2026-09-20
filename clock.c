@@ -47,14 +47,6 @@ void set_point(Point* p, float ang, float radius) {
     p->y = (int8_t)round(cos((double)ang) * (double)radius);
 }
 
-void intersect(Point* p, float ang, uint8_t width, uint8_t height) { // Quadrant I only
-    double t = tan((double)ang);
-    double x = (double)height * t;
-    double y = (double)width / t;
-    p->x = (int8_t)round(x > width ? width : x);
-    p->y = (int8_t)round(y > height ? height : y);
-}
-
 void copy_point(Point* p, Point* from, bool flip_x, bool flip_y) {
     p->x = flip_x ? -from->x : from->x;
     p->y = flip_y ? -from->y : from->y;
