@@ -72,4 +72,5 @@ before publishing a fork under the same name.
 ## Repository info
 
 This repo follows the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/ManeFunction?label=Sponsor&logo=GitHubSponsors&style=flat)](https://github.com/sponsors/ManeFunction)
