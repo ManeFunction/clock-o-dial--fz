@@ -69,10 +69,7 @@ The source code is licensed under the [Apache License 2.0](LICENSE). The "Clock'
 icon are trademarks and are **not** covered by that license - see [TRADEMARKS.md](TRADEMARKS.md)
 before publishing a fork under the same name.
 
-## Support
-
-If you find this useful, consider starring the repo or supporting the project [![GitHub Sponsors](https://img.shields.io/github/sponsors/ManeFunction?label=Sponsor&logo=GitHubSponsors&style=flat)](https://github.com/sponsors/ManeFunction).
-
 ## Repository info
 
 This repo follows the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/ManeFunction?label=Sponsor&logo=GitHubSponsors&style=flat)](https://github.com/sponsors/ManeFunction)
