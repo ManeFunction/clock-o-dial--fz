@@ -21,6 +21,8 @@
 #define BREAK_FOLD_MS 60000
 // Max number of individually-logged breaks per shift; further breaks past this just aren't logged
 #define MAX_BREAKS 16
+// How long the "too many breaks" message shows after a break is dropped for hitting that cap
+#define BREAK_LIMIT_MESSAGE_MS 5000
 // Eco mode: after this long with no button pressed, redraws slow down and animations freeze
 #define ECO_IDLE_MS 60000
 // Eco mode's slow redraw interval once idle (vs. the normal 1-per-second rate)
@@ -101,6 +103,7 @@ typedef struct {
     bool hold_active; // a qualifying reset/close hold is in progress, past HOLD_SHOW_MS
     float hold_fraction; // 0..1 linear progress toward HOLD_CONFIRM_MS (eased at draw time)
     const char* hold_label; // "RESETTING" or "CLOSING"
+    bool break_limit_message; // a break was just dropped for hitting MAX_BREAKS - say so briefly
 } UiOverlay;
 
 // A single completed break, logged only once it's run at least BREAK_FOLD_MS.

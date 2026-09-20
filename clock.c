@@ -435,6 +435,16 @@ void draw_timer(
         canvas_draw_str_aligned(
             canvas, OFS_RIGHT_X, bar_y - 8, AlignCenter, AlignCenter, ui->hold_label);
         canvas_draw_box(canvas, bar_x0, bar_y, (int32_t)(bar_width * eased), 2);
+    } else if(ui->break_limit_message) {
+        // Same bottom-right overlay box as the hold progress bar, just a plain two-line message
+        // instead - shown briefly after a break is dropped for hitting MAX_BREAKS.
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, OFS_MID_X + 1, 44, 128 - (OFS_MID_X + 1), 64 - 44);
+        canvas_set_color(canvas, ColorBlack);
+
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, 50, AlignCenter, AlignCenter, "Too many");
+        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, 58, AlignCenter, AlignCenter, "breaks!");
     }
 }
 

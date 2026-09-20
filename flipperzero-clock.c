@@ -229,6 +229,8 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         .hold_active = false,
         .hold_fraction = 0.0f,
         .hold_label = NULL,
+        .break_limit_message = (current_tick - app->break_limit_message_tick) <
+                                BREAK_LIMIT_MESSAGE_MS,
     };
     ui.hold_active = get_hold_overlay(app, current_tick, &ui.hold_label, &ui.hold_fraction);
 
@@ -434,6 +436,7 @@ int32_t clock_main(void* p) {
     app->backlight_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
     app->eco_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
     app->vibro_state_change_tick = (uint32_t)(0 - ICON_FLASH_MS);
+    app->break_limit_message_tick = (uint32_t)(0 - BREAK_LIMIT_MESSAGE_MS);
     // The user just interacted with the device to launch the app, so start the idle clock now
     app->last_activity_tick = furi_get_tick();
     app->ok_press_tick = 0;
@@ -830,6 +833,10 @@ int32_t clock_main(void* p) {
                                         app->breaks[app->break_count].end_wallclock_secs =
                                             rtc_now_seconds();
                                         app->break_count++;
+                                    } else {
+                                        // Already at MAX_BREAKS - this break isn't logged or
+                                        // folded into worked time, just silently dropped. Say so.
+                                        app->break_limit_message_tick = now_tick;
                                     }
                                 }
                                 // Start timer - adjust start_tick to account for stored milliseconds
