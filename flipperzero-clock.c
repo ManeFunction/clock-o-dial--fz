@@ -22,6 +22,25 @@ uint32_t rtc_now_seconds(void) {
 
 #define CFG_FILENAME APP_DATA_PATH("timer.cfg")
 
+// "loader close" (the CLI command, and what `ufbt launch` sends before relaunching) asks the app
+// to exit via a FuriSignalExit signal, not a real button press - with no signal callback
+// registered, the loader gets no acknowledgement and tells the user to close it manually. Answer
+// by injecting the same synthetic software Back press the input loop already treats as an
+// immediate-close request (see the INPUT_SEQUENCE_SOURCE_SOFTWARE check below), so the loader
+// sees the app actually exit.
+static bool app_signal_callback(uint32_t signal, void* arg, void* context) {
+    UNUSED(arg);
+    if(signal != FuriSignalExit) return false;
+    FuriMessageQueue* event_queue = context;
+    InputEvent event = {
+        .sequence_source = INPUT_SEQUENCE_SOURCE_SOFTWARE,
+        .key = InputKeyBack,
+        .type = InputTypePress,
+    };
+    furi_message_queue_put(event_queue, &event, 100);
+    return true;
+}
+
 // Adaptive frame rates for battery optimization
 #define FRAME_MS_RUNNING       1000 // 1 FPS when timer is running
 #define MUTEX_TIMEOUT_IDLE     100 // Short timeout when idle (draw callback won't be called often)
@@ -460,6 +479,7 @@ int32_t clock_main(void* p) {
 
     ViewPort* view_port = view_port_alloc();
     FuriMessageQueue* event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
+    furi_thread_set_signal_callback(furi_thread_get_current(), app_signal_callback, event_queue);
 
     view_port_draw_callback_set(view_port, app_draw_callback, app);
     view_port_input_callback_set(view_port, app_input_callback, event_queue);
