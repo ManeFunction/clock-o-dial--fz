@@ -31,6 +31,7 @@ typedef struct {
     bool ok_hold_triggered; // Reset already fired for the current hold
     uint32_t back_press_tick; // 0 when Back isn't currently held
     bool back_hold_triggered; // Close already fired for the current hold
+    uint32_t debug_travel_press_tick; // Start of the current debug time-travel hold, for its ramp
 } AppData;
 
 // Seconds since local midnight, per the Flipper's real-time clock.

@@ -125,6 +125,18 @@ static TopRightIconSlot current_top_right_icon_slot(const AppData* app, uint32_t
     return have_winner ? winner : TopRightIconNone;
 }
 
+// How many minutes one debug time-travel step covers, given how long the key's been held -
+// starts at a single minute for precise single-tap control, then ramps up through progressively
+// bigger intervals so holding it can fly through a whole shift in a couple of seconds.
+static int32_t debug_travel_step_minutes(uint32_t held_ms) {
+    static const uint32_t thresholds_ms[] = {750, 1500, 2250, 3000, 3750, 4500, 5250, 6000};
+    static const int32_t steps_minutes[] = {1, 5, 15, 30, 60, 120, 240, 480, 720};
+    for(size_t i = 0; i < COUNT_OF(thresholds_ms); i++) {
+        if(held_ms < thresholds_ms[i]) return steps_minutes[i];
+    }
+    return steps_minutes[COUNT_OF(steps_minutes) - 1]; // past every threshold - cap at 12h/step
+}
+
 static void adjust_shift_duration(AppData* app, File* file, bool increase) {
     if(furi_mutex_acquire(app->mutex, 100) != FuriStatusOk) return;
     if(!app->has_been_started) {
@@ -466,6 +478,7 @@ int32_t clock_main(void* p) {
     app->ok_hold_triggered = false;
     app->back_press_tick = 0;
     app->back_hold_triggered = false;
+    app->debug_travel_press_tick = 0;
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     File* file = storage_file_alloc(storage);
@@ -700,7 +713,10 @@ int32_t clock_main(void* p) {
                             if(debug_just_unlocked) {
                                 // Consumed entirely by the unlock celebration
                             } else if(is_debug_mode_active()) {
-                                debug_time_travel(app);
+                                // Left fast-forwards; holding it ramps up via the Repeat handler
+                                // below, using this tick as the hold's start for that ramp.
+                                app->debug_travel_press_tick = furi_get_tick();
+                                debug_time_travel(app, 1);
                             } else {
                                 // Working/Break mode: toggle vibro. Same reveal-then-confirm
                                 // pattern as eco/backlight - first press just shows the
@@ -715,16 +731,22 @@ int32_t clock_main(void* p) {
                                 app->vibro_state_change_tick = now;
                             }
                         } else if(event.key == InputKeyRight) {
-                            // Working/Break mode: toggle eco mode. Same reveal-then-confirm
-                            // pattern as backlight - first press just shows the current state.
-                            uint32_t now = furi_get_tick();
-                            bool icon_visible =
-                                current_top_right_icon_slot(app, now) == TopRightIconEco;
-                            if(icon_visible) {
-                                app->cfg.eco_mode_enabled = !app->cfg.eco_mode_enabled;
-                                cfg_save_internal(file, &app->cfg);
+                            if(is_debug_mode_active()) {
+                                // Right rewinds - the mirror image of Left's fast-forward.
+                                app->debug_travel_press_tick = furi_get_tick();
+                                debug_time_travel(app, -1);
+                            } else {
+                                // Working/Break mode: toggle eco mode. Same reveal-then-confirm
+                                // pattern as backlight - first press just shows the current state.
+                                uint32_t now = furi_get_tick();
+                                bool icon_visible =
+                                    current_top_right_icon_slot(app, now) == TopRightIconEco;
+                                if(icon_visible) {
+                                    app->cfg.eco_mode_enabled = !app->cfg.eco_mode_enabled;
+                                    cfg_save_internal(file, &app->cfg);
+                                }
+                                app->eco_state_change_tick = now;
                             }
-                            app->eco_state_change_tick = now;
                         }
                         furi_mutex_release(app->mutex);
                     }
@@ -776,9 +798,20 @@ int32_t clock_main(void* p) {
                     break;
                 case InputKeyLeft:
                 case InputKeyRight:
-                    // Holding left/right keeps cycling the shift duration in Shift mode;
-                    // does nothing once a shift has started
-                    adjust_shift_duration(app, file, event.key == InputKeyRight);
+                    if(app->has_been_started) {
+                        // Holding left/right ramps the debug time-travel step up the longer
+                        // it's held, for fast bulk jumps; does nothing outside debug mode.
+                        if(is_debug_mode_active() &&
+                           furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
+                            uint32_t held_ms = furi_get_tick() - app->debug_travel_press_tick;
+                            int32_t step = debug_travel_step_minutes(held_ms);
+                            debug_time_travel(app, event.key == InputKeyLeft ? step : -step);
+                            furi_mutex_release(app->mutex);
+                        }
+                    } else {
+                        // Holding left/right keeps cycling the shift duration in Shift mode
+                        adjust_shift_duration(app, file, event.key == InputKeyRight);
+                    }
                     break;
                 default:
                     break;

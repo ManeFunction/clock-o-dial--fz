@@ -17,6 +17,10 @@ bool is_debug_mode_active(void);
 // (and always returns false) on any other device.
 bool debug_feed_combo_key(InputKey key);
 
-// Debug-only: simulate the shift (and its logged breaks) having started an hour earlier, with
-// that hour credited as worked time too. Only reachable via is_debug_mode_active().
-void debug_time_travel(AppData* app);
+// Debug-only: slide the whole recorded shift (its start and every logged break) by `minutes` as
+// one solid block - positive fast-forwards it, negative rewinds it - preserving every segment's
+// own duration exactly. While running, that time also counts as worked (moving the prediction
+// with it); while paused, it only ages the current break, leaving the prediction untouched, since
+// break time was never worked time. Bounded so it can never rewind past "now" or fast-forward far
+// enough to wrap around a full day. Only reachable via is_debug_mode_active().
+void debug_time_travel(AppData* app, int32_t minutes);

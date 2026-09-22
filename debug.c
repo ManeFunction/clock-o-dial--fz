@@ -42,7 +42,11 @@ bool debug_feed_combo_key(InputKey key) {
     return false;
 }
 
-#define DEBUG_TIME_TRAVEL_SECONDS 3600
+#define DEBUG_TIME_TRAVEL_MINUTE_SECONDS 60
+// Never let the overall span from the shift's start to "now" grow past this when fast-forwarding
+// - stays comfortably clear of the 24h wrap boundary that wall-clock-of-day arithmetic wraps
+// around at.
+#define DEBUG_TIME_TRAVEL_MAX_SPAN_SECONDS (20 * 3600)
 
 // Shifts a wall-clock (seconds-of-day) value by delta, wrapping around midnight.
 static uint32_t wrap_add_seconds(uint32_t base, int32_t delta) {
@@ -51,14 +55,50 @@ static uint32_t wrap_add_seconds(uint32_t base, int32_t delta) {
     return (uint32_t)result;
 }
 
-void debug_time_travel(AppData* app) {
-    // Simulates the shift genuinely having started an hour earlier and having been worked
-    // continuously since then: the start point moves back, and that hour is credited as worked
-    // time too, pulling the predicted finish earlier. Every already-logged break, plus the live
-    // one if a break is in progress, shifts by the same amount so the whole timeline - including
-    // its breaks - stays internally consistent.
-    int32_t delta = -DEBUG_TIME_TRAVEL_SECONDS;
+// Forward duration in seconds from `from` to `to`, both seconds-of-day, wrapping past midnight.
+static uint32_t forward_gap_seconds(uint32_t from, uint32_t to) {
+    return to >= from ? to - from : to + 86400 - from;
+}
 
+// Shifts a (wallclock, tick) pair together by delta seconds, without ever pushing the tick side
+// past `now_tick` - which would make whatever duration it's later subtracted from look negative.
+static void shift_tick(uint32_t* tick, uint32_t now_tick, int32_t delta) {
+    uint32_t new_tick = *tick + (uint32_t)(delta * 1000);
+    *tick = (int32_t)(now_tick - new_tick) >= 0 ? new_tick : now_tick;
+}
+
+void debug_time_travel(AppData* app, int32_t minutes) {
+    // The whole recorded history - the shift's start and every logged break - slides by the same
+    // amount, as one solid block: every segment's own individual duration (each break's length,
+    // the work gaps between them) is preserved exactly, only their absolute position in the day
+    // changes. What differs between running and paused is only whether that also counts as more
+    // (or less) worked time.
+    int32_t delta = -minutes * DEBUG_TIME_TRAVEL_MINUTE_SECONDS;
+    uint32_t now = rtc_now_seconds();
+    uint32_t now_tick = furi_get_tick();
+
+    // The anchor closest to "now" - the current live segment's own start - is what determines
+    // how far we can rewind before crossing "now" itself; the shift's overall start is what
+    // determines how far we can fast-forward before that overall span nears the wrap boundary.
+    uint32_t live_start = app->running ? (app->break_count > 0 ?
+                                               app->breaks[app->break_count - 1].end_wallclock_secs :
+                                               app->start_wallclock_secs) :
+                                          app->pause_start_wallclock;
+    if(delta > 0) {
+        // Rewinding: don't push the most recent boundary past "now".
+        uint32_t live_gap = forward_gap_seconds(live_start, now);
+        if((uint32_t)delta > live_gap) delta = (int32_t)live_gap;
+    } else if(delta < 0) {
+        // Fast-forwarding: don't let the total span since the shift began balloon toward the
+        // 24h wrap boundary.
+        uint32_t overall_gap = forward_gap_seconds(app->start_wallclock_secs, now);
+        uint32_t max_growth = overall_gap < DEBUG_TIME_TRAVEL_MAX_SPAN_SECONDS ?
+                                   DEBUG_TIME_TRAVEL_MAX_SPAN_SECONDS - overall_gap :
+                                   0;
+        if((uint32_t)(-delta) > max_growth) delta = -(int32_t)max_growth;
+    }
+
+    app->start_wallclock_secs = wrap_add_seconds(app->start_wallclock_secs, delta);
     for(uint8_t i = 0; i < app->break_count; i++) {
         app->breaks[i].start_wallclock_secs =
             wrap_add_seconds(app->breaks[i].start_wallclock_secs, delta);
@@ -66,13 +106,16 @@ void debug_time_travel(AppData* app) {
             wrap_add_seconds(app->breaks[i].end_wallclock_secs, delta);
     }
 
-    if(!app->running) {
-        // A break is currently live - move its bookkeeping too (both the wall-clock anchor used
-        // to log it once it ends, and the monotonic one used for the sub-minute fold-in check)
+    if(app->running) {
+        // Actively working - this time genuinely counts as worked. elapsed_seconds only ever
+        // holds *completed* segments' totals, and the live segment's own duration is entirely
+        // captured by start_tick vs the real current tick, so keep that in lockstep with the
+        // wall-clock shift above rather than touching elapsed_seconds directly.
+        shift_tick(&app->start_tick, now_tick, delta);
+    } else {
+        // On a break - break time never counts as worked, so elapsed_seconds (and the
+        // prediction it drives) stays untouched; only the live break's own bookkeeping moves.
         app->pause_start_wallclock = wrap_add_seconds(app->pause_start_wallclock, delta);
-        app->pause_start_tick += (uint32_t)(delta * 1000);
+        shift_tick(&app->pause_start_tick, now_tick, delta);
     }
-
-    app->elapsed_seconds = (uint32_t)((int32_t)app->elapsed_seconds - delta);
-    app->start_wallclock_secs = wrap_add_seconds(app->start_wallclock_secs, delta);
 }
