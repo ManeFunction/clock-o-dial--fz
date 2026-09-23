@@ -16,6 +16,8 @@ typedef struct {
     uint32_t elapsed_seconds;
     uint16_t ms_adjust;
     bool finish_sound_played; // Track if finish sound has been played
+    uint32_t finish_wallclock_secs; // Real time-of-day when finish was detected; the dial freezes
+        // on this instead of live "now" until the user dismisses the finished shift
     uint32_t last_hour_played; // Track last hour that played chime (to avoid repeats)
     uint32_t pause_start_tick; // When the current break began (monotonic), for the fold-in check
     uint32_t pause_start_wallclock; // When the current break began (wall clock), for logging it

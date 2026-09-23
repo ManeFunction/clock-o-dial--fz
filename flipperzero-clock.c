@@ -125,6 +125,22 @@ static TopRightIconSlot current_top_right_icon_slot(const AppData* app, uint32_t
     return have_winner ? winner : TopRightIconNone;
 }
 
+// Resets a shift back to a fresh, unconfigured Set-mode state - used by the OK hold-to-reset,
+// and by tapping OK or Back while sitting at a finished shift.
+static void reset_to_shift_mode(AppData* app) {
+    app->has_been_started = false;
+    app->running = false;
+    app->elapsed_seconds = 0;
+    app->ms_adjust = 0;
+    app->start_tick = 0;
+    app->start_wallclock_secs = 0;
+    app->pause_start_tick = 0;
+    app->pause_start_wallclock = 0;
+    app->break_count = 0;
+    app->finish_sound_played = false;
+    app->last_hour_played = 0;
+}
+
 // How many minutes one debug time-travel step covers, given how long the key's been held -
 // starts at a single minute for precise single-tap control, then ramps up through progressively
 // bigger intervals so holding it can fly through a whole shift in a couple of seconds.
@@ -260,6 +276,12 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
     };
     ui.hold_active = get_hold_overlay(app, current_tick, &ui.hold_label, &ui.hold_fraction);
 
+    // Sitting at a finished shift: freeze the hand (and everything else "now"-derived) on the
+    // moment finish was detected, rather than letting it keep drifting with real time while the
+    // user looks the completed shift over. Any button dismisses it back to Set mode.
+    uint32_t now_wallclock_secs =
+        app->finish_sound_played ? app->finish_wallclock_secs : rtc_now_seconds();
+
     draw_timer(
         canvas,
         &app->face,
@@ -268,7 +290,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         ms,
         app->running,
         app->has_been_started,
-        rtc_now_seconds(),
+        now_wallclock_secs,
         app->start_wallclock_secs,
         &break_log,
         &ui);
@@ -551,6 +573,7 @@ int32_t clock_main(void* p) {
                             app->ms_adjust = 0;
                         }
                         app->finish_sound_played = true;
+                        app->finish_wallclock_secs = rtc_now_seconds();
                         app->running = false;
                         bool sound_enabled = app->cfg.sound_enabled;
                         bool vibro_enabled = app->cfg.vibro_enabled;
@@ -591,10 +614,12 @@ int32_t clock_main(void* p) {
         // Redraw cadence, cheapest case first:
         // - A hold's progress bar is filling: redraw fast, in any screen/mode, so it looks smooth.
         // - The info pager: nothing on it animates, so only user input should wake this loop.
+        // - A finished shift sitting idle: the dial is frozen and nothing else animates either,
+        //   so only user input (which dismisses it) should wake this loop.
         // - Set mode: the configured duration never changes on its own, so a slow fixed cadence
         //   is enough regardless of eco mode or time format - user input still redraws instantly.
-        // - Working/break/finished: the dial and elapsed time tick in real time, so redraw at
-        //   1Hz, unless eco mode has slowed things down after a period of inactivity.
+        // - Working/break: the dial and elapsed time tick in real time, so redraw at 1Hz, unless
+        //   eco mode has slowed things down after a period of inactivity.
         bool hold_in_progress = (app->ok_press_tick != 0 && !app->ok_hold_triggered) ||
                                 (app->back_press_tick != 0 && !app->back_hold_triggered);
         uint32_t frame_interval;
@@ -602,7 +627,7 @@ int32_t clock_main(void* p) {
         if(hold_in_progress) {
             frame_interval = HOLD_PROGRESS_FRAME_MS;
             queue_timeout = frame_interval;
-        } else if(app->screen == ScreenInfo) {
+        } else if(app->screen == ScreenInfo || app->finish_sound_played) {
             frame_interval = 0; // unused - queue_timeout never times out, so this never gets read
             queue_timeout = FuriWaitForever;
         } else if(!app->has_been_started) {
@@ -764,17 +789,7 @@ int32_t clock_main(void* p) {
                             if((furi_get_tick() - app->ok_press_tick) >= required) {
                                 if(app->has_been_started) {
                                     // Held long enough - reset back to Shift mode
-                                    app->has_been_started = false;
-                                    app->running = false;
-                                    app->elapsed_seconds = 0;
-                                    app->ms_adjust = 0;
-                                    app->start_tick = 0;
-                                    app->start_wallclock_secs = 0;
-                                    app->pause_start_tick = 0;
-                                    app->pause_start_wallclock = 0;
-                                    app->break_count = 0;
-                                    app->finish_sound_played = false;
-                                    app->last_hour_played = 0;
+                                    reset_to_shift_mode(app);
                                 } else {
                                     // Held long enough in Set mode - open the info/options pager
                                     app->screen = ScreenInfo;
@@ -841,17 +856,7 @@ int32_t clock_main(void* p) {
 
                             if(is_finished) {
                                 // Timer finished: reset to Shift mode
-                                app->has_been_started = false;
-                                app->running = false;
-                                app->elapsed_seconds = 0;
-                                app->ms_adjust = 0;
-                                app->start_tick = 0;
-                                app->start_wallclock_secs = 0;
-                                app->pause_start_tick = 0;
-                                app->pause_start_wallclock = 0;
-                                app->break_count = 0;
-                                app->finish_sound_played = false;
-                                app->last_hour_played = 0;
+                                reset_to_shift_mode(app);
                             } else if(app->running) {
                                 // Stop timer - accumulate elapsed time including milliseconds
                                 uint32_t elapsed_ms = now_tick - app->start_tick;
@@ -913,10 +918,15 @@ int32_t clock_main(void* p) {
                 case InputKeyBack:
                     // Releasing before the hold completes just cancels the close - on the info
                     // screen, a plain short tap instead returns to the clock (already in Set
-                    // mode, since that's the only mode the info screen is reachable from).
+                    // mode, since that's the only mode the info screen is reachable from); at a
+                    // finished shift, a tap exits it too, same as OK.
                     if(furi_mutex_acquire(app->mutex, 100) == FuriStatusOk) {
-                        if(!app->back_hold_triggered && app->screen == ScreenInfo) {
-                            app->screen = ScreenClock;
+                        if(!app->back_hold_triggered) {
+                            if(app->screen == ScreenInfo) {
+                                app->screen = ScreenClock;
+                            } else if(app->finish_sound_played) {
+                                reset_to_shift_mode(app);
+                            }
                         }
                         app->back_press_tick = 0;
                         furi_mutex_release(app->mutex);
