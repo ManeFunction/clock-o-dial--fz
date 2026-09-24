@@ -616,10 +616,9 @@ int32_t clock_main(void* p) {
         // - The info pager: nothing on it animates, so only user input should wake this loop.
         // - A finished shift sitting idle: the dial is frozen and nothing else animates either,
         //   so only user input (which dismisses it) should wake this loop.
-        // - Set mode: the configured duration never changes on its own, so a slow fixed cadence
-        //   is enough regardless of eco mode or time format - user input still redraws instantly.
-        // - Working/break: the dial and elapsed time tick in real time, so redraw at 1Hz, unless
-        //   eco mode has slowed things down after a period of inactivity.
+        // - Everything else (Set mode included): the dial and the mascot's idle/working animation
+        //   both tick in real time, so redraw at 1Hz, unless eco mode has slowed things down after
+        //   a period of inactivity.
         bool hold_in_progress = (app->ok_press_tick != 0 && !app->ok_hold_triggered) ||
                                 (app->back_press_tick != 0 && !app->back_hold_triggered);
         uint32_t frame_interval;
@@ -630,9 +629,6 @@ int32_t clock_main(void* p) {
         } else if(app->screen == ScreenInfo || app->finish_sound_played) {
             frame_interval = 0; // unused - queue_timeout never times out, so this never gets read
             queue_timeout = FuriWaitForever;
-        } else if(!app->has_been_started) {
-            frame_interval = ECO_FRAME_MS; // reuse the same once-a-minute cadence as eco mode
-            queue_timeout = frame_interval;
         } else {
             bool eco_frozen = app->cfg.eco_mode_enabled &&
                               (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;

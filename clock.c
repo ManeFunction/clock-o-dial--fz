@@ -135,14 +135,14 @@ void draw_timer(
         // break gets carved out of it individually below, rather than showing one lumped gap.
         float history_start_angle = wallclock_angle(start_wallclock_secs);
         float history_length = (float)wallclock_span(start_wallclock_secs, now_wallclock_secs) /
-                                (12.0f * 3600.0f) * M_TWOPI_F;
+                               (12.0f * 3600.0f) * M_TWOPI_F;
 
         // Predicted segment: from now, for however much work remains at the current pace.
         // While on a break this starts sliding forward with real time, which pushes the
         // predicted finish time forward too.
-        uint32_t remaining_seconds =
-            timer_duration_seconds > elapsed_seconds ? timer_duration_seconds - elapsed_seconds :
-                                                        0;
+        uint32_t remaining_seconds = timer_duration_seconds > elapsed_seconds ?
+                                         timer_duration_seconds - elapsed_seconds :
+                                         0;
         float predicted_start_angle = hand_angle;
         float predicted_length = (float)remaining_seconds / (12.0f * 3600.0f) * M_TWOPI_F;
 
@@ -153,11 +153,10 @@ void draw_timer(
         for(uint8_t i = 0; i < break_log->count && break_angle_count < MAX_BREAKS + 1; i++) {
             break_start_angles[break_angle_count] =
                 wallclock_angle(break_log->items[i].start_wallclock_secs);
-            break_lengths[break_angle_count] =
-                (float)wallclock_span(
-                    break_log->items[i].start_wallclock_secs,
-                    break_log->items[i].end_wallclock_secs) /
-                (12.0f * 3600.0f) * M_TWOPI_F;
+            break_lengths[break_angle_count] = (float)wallclock_span(
+                                                   break_log->items[i].start_wallclock_secs,
+                                                   break_log->items[i].end_wallclock_secs) /
+                                               (12.0f * 3600.0f) * M_TWOPI_F;
             break_angle_count++;
         }
         if(break_log->live_active && break_angle_count < MAX_BREAKS + 1) {
@@ -195,16 +194,9 @@ void draw_timer(
         }
     }
 
-    // Draw the single hand - always real time, never removed or duplicated
+    // Main draw calls: hand, disc, frame, etc.
     draw_hand(canvas, OFS_LEFT_X, hand_angle, M_RAD, true);
-
     canvas_draw_disc(canvas, OFS_LEFT_X, OFS_Y, 2);
-
-    // The mascot's face frame - its border, spikes and hour marks are baked into the art itself,
-    // so the fill/hand above are the only things this app still draws for the dial's geometry.
-    // Its background is transparent so the fill dithering underneath shows through untouched.
-    // Flush to the screen's left/top/bottom edges (its height matches the screen's exactly), not
-    // centered on the dial - centering would clip it against those edges instead.
     canvas_set_bitmap_mode(canvas, true);
     canvas_draw_icon(canvas, 0, 0, &I_frame);
     canvas_set_bitmap_mode(canvas, false);
@@ -305,9 +297,16 @@ void draw_timer(
     // animation timer is needed. Eco mode freezes both on frame 1 after a minute of inactivity.
     bool show_frame_2 = !ui->animations_frozen && (now_wallclock_secs % 2 != 0);
 
-    // The croc's tail tip, flush against the face's own right edge with no gap - always visible,
-    // continuing the mascot's body regardless of shift state.
-    const Icon* croc_icon = show_frame_2 ? &I_croc_2 : &I_croc_1;
+    // The croc's tail tip, flush against the face's own right edge with no gap - always visible.
+    // Asleep until a shift actually starts, then it wakes up and animates instead. Both states
+    // animate at the same 1Hz (eco-frozen to 1/min when idle), since Set mode now redraws on the
+    // same cadence as working/break rather than its own slower fixed one.
+    const Icon* croc_icon;
+    if(has_been_started) {
+        croc_icon = show_frame_2 ? &I_croc_2 : &I_croc_1;
+    } else {
+        croc_icon = show_frame_2 ? &I_sleep_2 : &I_sleep_1;
+    }
     int32_t croc_x = icon_get_width(&I_frame);
     canvas_draw_icon(canvas, croc_x, icon_bottom_y - icon_get_height(croc_icon), croc_icon);
 
