@@ -298,14 +298,14 @@ void draw_timer(
     bool show_frame_2 = !ui->animations_frozen && (now_wallclock_secs % 2 != 0);
 
     // The croc's tail tip, flush against the face's own right edge with no gap - always visible.
-    // Asleep until a shift actually starts, then it wakes up and animates instead. Both states
-    // animate at the same 1Hz (eco-frozen to 1/min when idle), since Set mode now redraws on the
-    // same cadence as working/break rather than its own slower fixed one.
+    // Asleep whenever it isn't actively working (Set mode or on a break); awake and animating
+    // only while working. Both states animate at the same 1Hz (eco-frozen to 1/min when idle).
+    bool is_sleeping = !has_been_started || is_break;
     const Icon* croc_icon;
-    if(has_been_started) {
-        croc_icon = show_frame_2 ? &I_croc_2 : &I_croc_1;
-    } else {
+    if(is_sleeping) {
         croc_icon = show_frame_2 ? &I_sleep_2 : &I_sleep_1;
+    } else {
+        croc_icon = show_frame_2 ? &I_croc_2 : &I_croc_1;
     }
     int32_t croc_x = icon_get_width(&I_frame);
     canvas_draw_icon(canvas, croc_x, icon_bottom_y - icon_get_height(croc_icon), croc_icon);
@@ -317,8 +317,10 @@ void draw_timer(
         status_icon = show_frame_2 ? &I_coffee_2 : &I_coffee_1;
     }
     if(status_icon != NULL) {
-        // 3px gap to the right of the croc sprite, same bottom line.
-        int32_t status_icon_x = croc_x + icon_get_width(&I_croc_1) + 3;
+        // 4px gap to the right of whichever croc/sleep sprite is currently showing - measured
+        // off its actual width so the gap stays consistent even though the sleeping sprite is
+        // narrower than the awake one.
+        int32_t status_icon_x = croc_x + icon_get_width(croc_icon) + 4;
         canvas_draw_icon(
             canvas, status_icon_x, icon_bottom_y - icon_get_height(status_icon), status_icon);
     }
