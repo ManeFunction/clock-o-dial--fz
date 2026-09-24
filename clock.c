@@ -297,12 +297,19 @@ void draw_timer(
         canvas_draw_str_aligned(canvas, OFS_RIGHT_X, OFS_Y + 8, AlignCenter, AlignCenter, status);
     }
 
-    // Both animations share a bottom edge regardless of their frame heights
-    int32_t icon_bottom_y = OFS_Y + 15 + icon_get_height(&I_coffee_1);
+    // Everything on this bottom row - the croc tail and the working/break icon - shares the
+    // screen's own bottom edge regardless of each sprite's own height.
+    int32_t icon_bottom_y = 64;
 
     // Alternate frames once a second - draw callback already ticks at ~1Hz, so no separate
     // animation timer is needed. Eco mode freezes both on frame 1 after a minute of inactivity.
     bool show_frame_2 = !ui->animations_frozen && (now_wallclock_secs % 2 != 0);
+
+    // The croc's tail tip, flush against the face's own right edge with no gap - always visible,
+    // continuing the mascot's body regardless of shift state.
+    const Icon* croc_icon = show_frame_2 ? &I_croc_2 : &I_croc_1;
+    int32_t croc_x = icon_get_width(&I_frame);
+    canvas_draw_icon(canvas, croc_x, icon_bottom_y - icon_get_height(croc_icon), croc_icon);
 
     const Icon* status_icon = NULL;
     if(is_working) {
@@ -311,11 +318,10 @@ void draw_timer(
         status_icon = show_frame_2 ? &I_coffee_2 : &I_coffee_1;
     }
     if(status_icon != NULL) {
+        // 3px gap to the right of the croc sprite, same bottom line.
+        int32_t status_icon_x = croc_x + icon_get_width(&I_croc_1) + 3;
         canvas_draw_icon(
-            canvas,
-            OFS_RIGHT_X - icon_get_width(status_icon) / 2,
-            icon_bottom_y - icon_get_height(status_icon),
-            status_icon);
+            canvas, status_icon_x, icon_bottom_y - icon_get_height(status_icon), status_icon);
     }
 
     // Sound, eco, backlight, and vibro all share one top-right slot; only one of the four is
