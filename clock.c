@@ -13,9 +13,7 @@
 #define OFS_RIGHT_X 96
 #define OFS_Y       31
 
-#define H_RAD   17
 #define M_RAD   26
-#define S_RAD   29
 #define HMS_OFS 8
 
 #define FACE_RADIUS 31
@@ -43,19 +41,9 @@ void set_point(Point* p, float ang, float radius) {
     p->y = (int8_t)round(cos((double)ang) * (double)radius);
 }
 
-void copy_point(Point* p, Point* from, bool flip_x, bool flip_y) {
-    p->x = flip_x ? -from->x : from->x;
-    p->y = flip_y ? -from->y : from->y;
-}
-
 void set_line(Line* l, float ang, float start_rad, float end_rad) {
     set_point(&l->start, ang, start_rad);
     set_point(&l->end, ang, end_rad);
-}
-
-void copy_line(Line* l, Line* from, float flip_x, float flip_y) {
-    copy_point(&l->start, &from->start, flip_x, flip_y);
-    copy_point(&l->end, &from->end, flip_x, flip_y);
 }
 
 void draw_hand(Canvas* canvas, uint8_t ofs_x, float ang, int radius, bool thick) {
