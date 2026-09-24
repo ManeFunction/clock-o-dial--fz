@@ -85,11 +85,13 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes-file release_notes.md
 
-  catalog-pr:
+  # Pushes the submission branch to the catalog fork and links a prefilled PR. The PR itself is opened by hand:
+  # fine-grained tokens can't write to a public repo you don't own, and its checklist needs a human anyway.
+  catalog-submission:
     needs: [build, github-release]
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ secrets.CATALOG_TOKEN }} # classic PAT, public_repo scope: pushes to the fork, opens the upstream PR
+      GH_TOKEN: ${{ secrets.FLIPPER_CATALOG_TOKEN }} # fine-grained PAT, catalog fork only, Contents: read/write
       VERSION: ${{ needs.build.outputs.version }}
     steps:
       - uses: actions/checkout@v7
@@ -149,41 +151,40 @@ jobs:
           git commit -m "${{ steps.manifest.outputs.app-name }} ${VERSION}"
           git push --force origin "${{ steps.manifest.outputs.branch }}"
 
-      - name: Build PR body from the catalog's template
+      - name: Link a prefilled PR against the catalog
+        env:
+          BRANCH: ${{ steps.manifest.outputs.branch }}
+          APP_NAME: ${{ steps.manifest.outputs.app-name }}
+          IS_NEW: ${{ steps.manifest.outputs.is-new }}
         run: |
+          EXISTING=$(gh pr list --repo "$CATALOG_UPSTREAM" --head "$BRANCH" --state open --json url --jq '.[0].url')
+          if [ -n "$EXISTING" ]; then
+            echo "Catalog PR already open, its branch is updated: $EXISTING" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           {
-            if [ "${{ steps.manifest.outputs.is-new }}" = "true" ]; then
+            if [ "$IS_NEW" = "true" ]; then
               sed -n 's/^short_description: *//p' app/manifest.yml
               echo ""
             fi
             python3 app/.github/scripts/changelog_section.py "$VERSION" app/changelog.md
           } > changes.md
-          python3 - <<'EOF'
-          import re
+
+          python3 - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import os, re
+          from urllib.parse import quote, urlencode
+          env = os.environ
           body = open("catalog/.github/PULL_REQUEST_TEMPLATE.md", encoding="utf-8").read()
           changes = open("changes.md", encoding="utf-8").read().strip()
           body = re.sub(r"^- \[ Describe your application.*$", lambda _: changes, body, count=1, flags=re.M)
           body = re.sub(r"^- \[ Describe if your application requires.*$", "- None", body, count=1, flags=re.M)
-          open("pr_body.md", "w", encoding="utf-8").write(body)
+          if env["IS_NEW"] == "true":
+              title = f"Add {env['APP_NAME']} {env['VERSION']}"
+          else:
+              title = f"Update {env['APP_NAME']} to {env['VERSION']}"
+          head = f"{env['GITHUB_REPOSITORY_OWNER']}:{env['BRANCH']}"
+          query = urlencode({"expand": "1", "title": title, "body": body}, quote_via=quote)
+          url = f"https://github.com/{env['CATALOG_UPSTREAM']}/compare/main...{quote(head, safe=':/')}?{query}"
+          print(f"Catalog branch pushed. [Open the prefilled PR]({url}), fill in the checklist and AI disclosure, then create it.")
           EOF
-
-      # Draft on purpose: the author checklist and AI usage disclosure are for a human to fill in.
-      - name: Open draft PR against the catalog
-        run: |
-          BRANCH="${{ steps.manifest.outputs.branch }}"
-          HEAD="${{ github.repository_owner }}:$BRANCH"
-          EXISTING=$(gh pr list --repo "$CATALOG_UPSTREAM" --head "$BRANCH" --state open --json url --jq '.[0].url')
-          if [ -n "$EXISTING" ]; then
-            echo "PR already open, branch updated: $EXISTING" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          if [ "${{ steps.manifest.outputs.is-new }}" = "true" ]; then
-            TITLE="Add ${{ steps.manifest.outputs.app-name }} ${VERSION}"
-          else
-            TITLE="Update ${{ steps.manifest.outputs.app-name }} to ${VERSION}"
-          fi
-
-          URL=$(gh pr create --repo "$CATALOG_UPSTREAM" --base main --head "$HEAD" \
-            --draft --title "$TITLE" --body-file pr_body.md)
-          echo "Draft catalog PR: $URL — fill in the checklist and AI disclosure, then mark it ready." | tee -a "$GITHUB_STEP_SUMMARY"
