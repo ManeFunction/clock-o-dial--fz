@@ -32,7 +32,8 @@ jobs:
 
       - name: Build with ufbt
         id: build
-        uses: flipperdevices/flipperzero-ufbt-action@v0.1.4
+        # Fork with Node 24 action versions (node24-actions branch), until upstream merges and tags it.
+        uses: ManeFunction/flipperzero-ufbt-action@19eba5a6c2c8fc7766fbcf7118aca5ef6125fd98
         with:
           sdk-channel: release
 
