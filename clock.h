@@ -4,7 +4,6 @@
 
 #define OFS_LEFT_X          31
 #define FACE_RADIUS         31
-#define CLOCK_HOURS         12 // Dial is always a real 12-hour clock face
 #define MAX_TIMER_HOURS     12 // Max configurable shift length, in hours
 #define DEFAULT_TIMER_HOURS 8
 
@@ -28,7 +27,7 @@
 // Eco mode's slow redraw interval once idle (vs. the normal 1-per-second rate)
 #define ECO_FRAME_MS 60000
 
-// Segment fill geometry: a square inset from the dial's edge, sized so marks stay uncovered.
+// Segment fill geometry: a square inset from the dial's edge, sized so the frame stays uncovered.
 #define FILL_MARGIN    5
 #define FILL_HALF_SIZE (FACE_RADIUS - FILL_MARGIN)
 #define FILL_GRID_SIDE (2 * FILL_HALF_SIZE + 1)
@@ -37,9 +36,6 @@
 
 typedef enum {
     Normal = 0,
-    CopyHor,
-    CopyVer,
-    CopyBoth,
     Thick
 } LineType;
 
@@ -62,8 +58,6 @@ typedef struct {
 } FillPixel;
 
 typedef struct {
-    Line minutes[CLOCK_HOURS * 4]; // 4 minor ticks between each hour mark (every 5 minutes)
-    Line hour_marks[CLOCK_HOURS];
     FillPixel fill_pixels[FILL_PIXEL_CAPACITY];
     uint16_t fill_pixel_count;
 } ClockFace;

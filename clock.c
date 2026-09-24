@@ -18,8 +18,7 @@
 #define S_RAD   29
 #define HMS_OFS 8
 
-#define FACE_RADIUS        31
-#define FACE_DEFAULT_WIDTH 54
+#define FACE_RADIUS 31
 
 void draw_line(Canvas* c, uint8_t ofs_x, Line* l, LineType type) { // Bresenham-Algorithm
     int8_t x = l->start.x, y = l->start.y;
@@ -27,13 +26,10 @@ void draw_line(Canvas* c, uint8_t ofs_x, Line* l, LineType type) { // Bresenham-
     int8_t dy = -abs(l->end.y - y), sy = y < l->end.y ? 1 : -1;
     int8_t error = dx + dy, e2;
     while(true) {
-        if(type == Thick)
+        if(type == Thick) {
             canvas_draw_disc(c, ofs_x + x, OFS_Y - y, 1);
-        else {
+        } else {
             canvas_draw_dot(c, ofs_x + x, OFS_Y - y);
-            if(type & 1) canvas_draw_dot(c, ofs_x - x, OFS_Y - y); // copy hor or both
-            if(type & 2) canvas_draw_dot(c, ofs_x + x, OFS_Y + y); // copy ver or both
-            if(type == CopyBoth) canvas_draw_dot(c, ofs_x - x, OFS_Y + y);
         }
         if((x == l->end.x) && (y == l->end.y)) break;
         e2 = 2 * error;
@@ -76,58 +72,7 @@ void draw_hand(Canvas* canvas, uint8_t ofs_x, float ang, int radius, bool thick)
     }
 }
 
-// Finds where a ray at angle `ang` (from center, clockwise from top) exits the square face.
-static void square_intersect(float ang, uint8_t width, uint8_t height, float ofs, Point* out) {
-    float dir_x = sinf(ang);
-    float dir_y = cosf(ang);
-
-    float scale_x = (fabsf(dir_x) > 0.001f) ? (float)width / fabsf(dir_x) : width + height;
-    float scale_y = (fabsf(dir_y) > 0.001f) ? (float)height / fabsf(dir_y) : width + height;
-    float scale = (scale_x < scale_y) ? scale_x : scale_y;
-    scale -= ofs;
-    if(scale < 0) scale = 0;
-
-    float max_x = width - ofs;
-    float max_y = height - ofs;
-    float x = dir_x * scale;
-    float y = dir_y * scale;
-    if(x > max_x) x = max_x;
-    if(x < -max_x) x = -max_x;
-    if(y > max_y) y = max_y;
-    if(y < -max_y) y = -max_y;
-
-    out->x = (int8_t)roundf(x);
-    out->y = (int8_t)roundf(y);
-}
-
 void calc_clock_face(ClockFace* face) {
-    // Square face representing a real 12-hour clock (width = height = FACE_RADIUS)
-    uint8_t width = FACE_RADIUS;
-    uint8_t height = FACE_RADIUS;
-
-    float short_ofs = 2.0;
-    float long_ofs = 7.0;
-
-    float hour_angle_step = (float)M_TWOPI / (float)CLOCK_HOURS;
-    const uint8_t minor_ticks_per_hour = 4; // + the hour mark itself = 5 ticks/hour (every 5 min)
-    float minute_angle_step = hour_angle_step / (float)(minor_ticks_per_hour + 1);
-
-    uint8_t minute_mark_index = 0;
-    for(uint8_t hour = 0; hour < CLOCK_HOURS; hour++) {
-        float hour_ang = (float)hour * hour_angle_step;
-
-        square_intersect(hour_ang, width, height, 0, &face->hour_marks[hour].start);
-        square_intersect(hour_ang, width, height, long_ofs, &face->hour_marks[hour].end);
-
-        for(uint8_t m = 1; m <= minor_ticks_per_hour; m++) {
-            float min_ang = hour_ang + (float)m * minute_angle_step;
-            square_intersect(min_ang, width, height, 0, &face->minutes[minute_mark_index].start);
-            square_intersect(
-                min_ang, width, height, short_ofs, &face->minutes[minute_mark_index].end);
-            minute_mark_index++;
-        }
-    }
-
     // Precompute the worked-pattern's dither pixels and their dial angle once, so draw_timer
     // only has to check arc containment (no atan2f) on every one-second redraw.
     uint16_t fill_index = 0;
@@ -250,20 +195,19 @@ void draw_timer(
         }
     }
 
-    // Draw minute marks (short ticks)
-    for(uint8_t i = 0; i < CLOCK_HOURS * 4; i++) {
-        draw_line(canvas, OFS_LEFT_X, &face->minutes[i], Normal);
-    }
-
-    // Draw hour marks (long ticks)
-    for(uint8_t i = 0; i < CLOCK_HOURS; i++) {
-        draw_line(canvas, OFS_LEFT_X, &face->hour_marks[i], Normal);
-    }
-
     // Draw the single hand - always real time, never removed or duplicated
     draw_hand(canvas, OFS_LEFT_X, hand_angle, M_RAD, true);
 
     canvas_draw_disc(canvas, OFS_LEFT_X, OFS_Y, 2);
+
+    // The mascot's face frame - its border, spikes and hour marks are baked into the art itself,
+    // so the fill/hand above are the only things this app still draws for the dial's geometry.
+    // Its background is transparent so the fill dithering underneath shows through untouched.
+    // Flush to the screen's left/top/bottom edges (its height matches the screen's exactly), not
+    // centered on the dial - centering would clip it against those edges instead.
+    canvas_set_bitmap_mode(canvas, true);
+    canvas_draw_icon(canvas, 0, 0, &I_frame);
+    canvas_set_bitmap_mode(canvas, false);
 
     // Draw digital timer and status on right side
     uint32_t total_elapsed_ms = elapsed_seconds * 1000 + ms;
