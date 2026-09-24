@@ -364,12 +364,11 @@ void draw_timer(
         float eased = 0.5f * (1.0f - cosf(frac * (float)M_PI)); // ease-in-out sine
 
         // Working/break (RESETTING, or CLOSING while working): reuse the status-text row and
-        // stay tight below it, low enough to clear the mascot animations at the bottom of the
-        // screen, which the old, taller box (down to y=64) used to cover entirely. Set mode
-        // (INFO, or CLOSING there) instead reuses the "Set shift" title's row, with the bar above
-        // it near the top edge - that keeps clear of both the time readout/arrows in the middle
-        // and the sleep animation at the bottom. The gap between label and bar is the same 7px
-        // (measured from the label's own center) in both layouts, just mirrored top-to-bottom.
+        // stay tight below it, clear of the mascot animation at the bottom of the screen. Set
+        // mode (INFO, or CLOSING there) instead reuses the "Set shift" title's row, with the bar
+        // above it near the top edge, clear of both the time readout/arrows in the middle and
+        // the sleep animation at the bottom. The label-to-bar gap is the same 7px (from the
+        // label's center) in both layouts, just mirrored top-to-bottom.
         const int32_t bar_height = 2;
         // The box and the bar both start right past the face sprite's own right edge (never a
         // pixel sooner), so neither can ever cut into it - the box additionally needs no further
@@ -402,8 +401,7 @@ void draw_timer(
         canvas_draw_box(canvas, bar_x0, bar_y, (int32_t)(bar_width * eased), bar_height);
     } else if(ui->break_limit_message) {
         // Same idea as the hold overlay above: reuse the status-text row, so this sits between
-        // the time readout and the mascot animation instead of covering the animation like the
-        // old, lower box (down to y=64) used to, and never cut into the face sprite's own edge.
+        // the time readout and the mascot animation, and never cuts into the face sprite's edge.
         const int32_t frame_right = icon_get_width(&I_frame);
         // A couple px lower than the status text's own row and with tighter padding, so the
         // block clears the time readout above it instead of just touching it.
