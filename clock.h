@@ -19,7 +19,7 @@
 // Breaks shorter than this are folded into worked time instead of leaving a visible gap
 #define BREAK_FOLD_MS          60000
 // Max number of individually-logged breaks per shift; further breaks past this just aren't logged
-#define MAX_BREAKS             3
+#define MAX_BREAKS             16
 // How long the "too many breaks" message shows after a break is dropped for hitting that cap
 #define BREAK_LIMIT_MESSAGE_MS 5000
 // Eco mode: after this long with no button pressed, redraws slow down and animations freeze
