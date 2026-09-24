@@ -139,6 +139,9 @@ static void reset_to_shift_mode(AppData* app) {
     app->break_count = 0;
     app->finish_sound_played = false;
     app->last_hour_played = 0;
+    // Otherwise a message shown just before resetting could keep drawing over the Set screen
+    // for the rest of its 5s window.
+    app->break_limit_message_tick = (uint32_t)(0 - BREAK_LIMIT_MESSAGE_MS);
 }
 
 // How many minutes one debug time-travel step covers, given how long the key's been held -
@@ -534,6 +537,9 @@ int32_t clock_main(void* p) {
         // Adaptive finish check - only check frequently when close to finish
         uint32_t current_tick = furi_get_tick();
         bool should_check_finish = false;
+        // Also read below, once mutex-free, to keep eco mode from delaying the finish check (and
+        // its melody) by sleeping through the last minute of the shift - see its use further down.
+        bool finish_imminent = false;
 
         if(furi_mutex_acquire(app->mutex, 0) == FuriStatusOk) {
             if(app->has_been_started && app->running && !app->finish_sound_played) {
@@ -543,6 +549,7 @@ int32_t clock_main(void* p) {
                 uint32_t remaining = timer_duration_seconds > elapsed_seconds ?
                                          timer_duration_seconds - elapsed_seconds :
                                          0;
+                finish_imminent = remaining <= FINISH_CHECK_THRESHOLD;
 
                 // Check finish first (before hour check) to prioritize finish sound
                 // Only check finish frequently when close (battery optimization)
@@ -616,6 +623,9 @@ int32_t clock_main(void* p) {
         // - The info pager: nothing on it animates, so only user input should wake this loop.
         // - A finished shift sitting idle: the dial is frozen and nothing else animates either,
         //   so only user input (which dismisses it) should wake this loop.
+        // - The shift is about to finish: force the same fast cadence the finish-check above
+        //   needs, regardless of eco mode - otherwise an eco-frozen, idle shift only wakes up
+        //   once a minute and the finish melody/state can land up to a minute late.
         // - Everything else (Set mode included): the dial and the mascot's idle/working animation
         //   both tick in real time, so redraw at 1Hz, unless eco mode has slowed things down after
         //   a period of inactivity.
@@ -629,6 +639,9 @@ int32_t clock_main(void* p) {
         } else if(app->screen == ScreenInfo || app->finish_sound_played) {
             frame_interval = 0; // unused - queue_timeout never times out, so this never gets read
             queue_timeout = FuriWaitForever;
+        } else if(finish_imminent) {
+            frame_interval = FINISH_CHECK_INTERVAL;
+            queue_timeout = frame_interval;
         } else {
             bool eco_frozen = app->cfg.eco_mode_enabled &&
                               (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
@@ -859,10 +872,14 @@ int32_t clock_main(void* p) {
                                 app->running = false;
 
                                 if(app->pause_start_tick != 0 && elapsed_ms < BREAK_FOLD_MS) {
-                                    // Too little work happened since the last break to count as
-                                    // splitting it into two - stay anchored to that same break
-                                    // (pause_start_tick/wallclock untouched) instead of crediting
-                                    // this sliver as work, same threshold as folding a break.
+                                    // Too little work happened since the last break to credit as
+                                    // work, same threshold as folding a break. The anchor still
+                                    // moves to now, though: the break before this sliver was
+                                    // already folded/logged at the resume that started it, so
+                                    // leaving the anchor behind would re-span and double-count
+                                    // that already-committed time on the next resume.
+                                    app->pause_start_tick = now_tick;
+                                    app->pause_start_wallclock = rtc_now_seconds();
                                 } else {
                                     app->elapsed_seconds += (elapsed_ms / 1000);
                                     app->ms_adjust =
