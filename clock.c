@@ -358,26 +358,48 @@ void draw_timer(
     }
 
     if(ui->hold_active) {
-        // Overlay the bottom-right quadrant with a hold-to-confirm progress bar
         float frac = ui->hold_fraction;
         if(frac < 0.0f) frac = 0.0f;
         if(frac > 1.0f) frac = 1.0f;
         float eased = 0.5f * (1.0f - cosf(frac * (float)M_PI)); // ease-in-out sine
 
-        const uint8_t bar_y = 62;
-        const uint8_t bar_margin = 2;
-        int32_t bar_x0 = OFS_MID_X + 1 + bar_margin;
+        // Working/break (RESETTING, or CLOSING while working): reuse the status-text row and
+        // stay tight below it, low enough to clear the mascot animations at the bottom of the
+        // screen, which the old, taller box (down to y=64) used to cover entirely. Set mode
+        // (INFO, or CLOSING there) instead reuses the "Set shift" title's row, with the bar above
+        // it near the top edge - that keeps clear of both the time readout/arrows in the middle
+        // and the sleep animation at the bottom. The gap between label and bar is the same 7px
+        // (measured from the label's own center) in both layouts, just mirrored top-to-bottom.
+        const int32_t bar_height = 2;
+        // The box and the bar both start right past the face sprite's own right edge (never a
+        // pixel sooner), so neither can ever cut into it - the box additionally needs no further
+        // gap since it's just erasing, while the bar gets a few extra px of breathing room.
+        const int32_t frame_right = icon_get_width(&I_frame);
+        const int32_t bar_margin = 4;
+        int32_t label_y, bar_y, box_y0, box_y1;
+        if(has_been_started) {
+            label_y = OFS_Y + 8; // same row the "Working"/"Break" status text uses
+            bar_y = label_y + 7;
+            box_y0 = label_y - 6;
+            box_y1 = bar_y + bar_height + 1;
+        } else {
+            label_y = 17; // same row the "Set shift" title uses
+            bar_y = label_y - 7 - bar_height;
+            box_y0 = bar_y - 2;
+            box_y1 = label_y + 6;
+        }
+        int32_t bar_x0 = frame_right + bar_margin;
         int32_t bar_x1 = 128 - bar_margin;
         int32_t bar_width = bar_x1 - bar_x0;
 
         canvas_set_color(canvas, ColorWhite);
-        canvas_draw_box(canvas, OFS_MID_X + 1, 44, 128 - (OFS_MID_X + 1), 64 - 44);
+        canvas_draw_box(canvas, frame_right, box_y0, 128 - frame_right, box_y1 - box_y0);
         canvas_set_color(canvas, ColorBlack);
 
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str_aligned(
-            canvas, OFS_RIGHT_X, bar_y - 8, AlignCenter, AlignCenter, ui->hold_label);
-        canvas_draw_box(canvas, bar_x0, bar_y, (int32_t)(bar_width * eased), 2);
+            canvas, OFS_RIGHT_X, label_y, AlignCenter, AlignCenter, ui->hold_label);
+        canvas_draw_box(canvas, bar_x0, bar_y, (int32_t)(bar_width * eased), bar_height);
     } else if(ui->break_limit_message) {
         // Same bottom-right overlay box as the hold progress bar, just a plain two-line message
         // instead - shown briefly after a break is dropped for hitting MAX_BREAKS.
