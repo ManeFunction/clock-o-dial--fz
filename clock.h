@@ -9,28 +9,28 @@
 
 // How long the OK/Back button must be held before it triggers reset/close. Closing from Set
 // mode (nothing running yet, so nothing to lose) only needs half as long a hold.
-#define HOLD_CONFIRM_MS 3000
+#define HOLD_CONFIRM_MS        3000
 // Holding OK in Set mode instead opens the info/options pager - needs only a quarter of the hold
-#define INFO_HOLD_MS (HOLD_CONFIRM_MS / 4)
+#define INFO_HOLD_MS           (HOLD_CONFIRM_MS / 4)
 // Hold overlay (progress bar + label) only appears once the hold has run this long
-#define HOLD_SHOW_MS 300
+#define HOLD_SHOW_MS           300
 // How long the sound-on and backlight icons flash after their state changes
-#define ICON_FLASH_MS 5000
+#define ICON_FLASH_MS          5000
 // Breaks shorter than this are folded into worked time instead of leaving a visible gap
-#define BREAK_FOLD_MS 60000
+#define BREAK_FOLD_MS          60000
 // Max number of individually-logged breaks per shift; further breaks past this just aren't logged
-#define MAX_BREAKS 16
+#define MAX_BREAKS             3
 // How long the "too many breaks" message shows after a break is dropped for hitting that cap
 #define BREAK_LIMIT_MESSAGE_MS 5000
 // Eco mode: after this long with no button pressed, redraws slow down and animations freeze
-#define ECO_IDLE_MS 60000
+#define ECO_IDLE_MS            60000
 // Eco mode's slow redraw interval once idle (vs. the normal 1-per-second rate)
-#define ECO_FRAME_MS 60000
+#define ECO_FRAME_MS           60000
 
 // Segment fill geometry: a square inset from the dial's edge, sized so the frame stays uncovered.
-#define FILL_MARGIN    5
-#define FILL_HALF_SIZE (FACE_RADIUS - FILL_MARGIN)
-#define FILL_GRID_SIDE (2 * FILL_HALF_SIZE + 1)
+#define FILL_MARGIN         5
+#define FILL_HALF_SIZE      (FACE_RADIUS - FILL_MARGIN)
+#define FILL_GRID_SIDE      (2 * FILL_HALF_SIZE + 1)
 // Half the pixels in the fill square pass the worked-pattern's dither (only those are stored)
 #define FILL_PIXEL_CAPACITY ((FILL_GRID_SIDE * FILL_GRID_SIDE + 1) / 2)
 

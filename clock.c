@@ -401,15 +401,26 @@ void draw_timer(
             canvas, OFS_RIGHT_X, label_y, AlignCenter, AlignCenter, ui->hold_label);
         canvas_draw_box(canvas, bar_x0, bar_y, (int32_t)(bar_width * eased), bar_height);
     } else if(ui->break_limit_message) {
-        // Same bottom-right overlay box as the hold progress bar, just a plain two-line message
-        // instead - shown briefly after a break is dropped for hitting MAX_BREAKS.
+        // Same idea as the hold overlay above: reuse the status-text row, so this sits between
+        // the time readout and the mascot animation instead of covering the animation like the
+        // old, lower box (down to y=64) used to, and never cut into the face sprite's own edge.
+        const int32_t frame_right = icon_get_width(&I_frame);
+        // A couple px lower than the status text's own row and with tighter padding, so the
+        // block clears the time readout above it instead of just touching it.
+        const int32_t label_y = OFS_Y + 10;
+        const int32_t line_gap = 8;
+        const int32_t line1_y = label_y - line_gap / 2;
+        const int32_t line2_y = label_y + line_gap / 2;
+        const int32_t box_y0 = line1_y - 4;
+        const int32_t box_y1 = line2_y + 4;
+
         canvas_set_color(canvas, ColorWhite);
-        canvas_draw_box(canvas, OFS_MID_X + 1, 44, 128 - (OFS_MID_X + 1), 64 - 44);
+        canvas_draw_box(canvas, frame_right, box_y0, 128 - frame_right, box_y1 - box_y0);
         canvas_set_color(canvas, ColorBlack);
 
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, 50, AlignCenter, AlignCenter, "Too many");
-        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, 58, AlignCenter, AlignCenter, "breaks!");
+        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, line1_y, AlignCenter, AlignCenter, "Too many");
+        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, line2_y, AlignCenter, AlignCenter, "breaks!");
     }
 }
 
