@@ -124,7 +124,8 @@ void draw_timer(
     uint16_t ms,
     bool running,
     bool has_been_started,
-    uint32_t now_wallclock_secs,
+    uint32_t now_wallclock_secs, // frozen once finished, so the dial itself stops moving
+    uint32_t animation_wallclock_secs, // always real time, so the mascot keeps animating
     uint32_t start_wallclock_secs,
     const BreakLog* break_log,
     const UiOverlay* ui);

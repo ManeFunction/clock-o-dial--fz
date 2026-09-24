@@ -281,9 +281,11 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
 
     // Sitting at a finished shift: freeze the hand (and everything else "now"-derived) on the
     // moment finish was detected, rather than letting it keep drifting with real time while the
-    // user looks the completed shift over. Any button dismisses it back to Set mode.
+    // user looks the completed shift over. Any button dismisses it back to Set mode. The mascot's
+    // sleep animation still needs real time, though, so it's handed the live clock separately.
+    uint32_t real_now_wallclock_secs = rtc_now_seconds();
     uint32_t now_wallclock_secs =
-        app->finish_sound_played ? app->finish_wallclock_secs : rtc_now_seconds();
+        app->finish_sound_played ? app->finish_wallclock_secs : real_now_wallclock_secs;
 
     draw_timer(
         canvas,
@@ -294,6 +296,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         app->running,
         app->has_been_started,
         now_wallclock_secs,
+        real_now_wallclock_secs,
         app->start_wallclock_secs,
         &break_log,
         &ui);
@@ -621,14 +624,13 @@ int32_t clock_main(void* p) {
         // Redraw cadence, cheapest case first:
         // - A hold's progress bar is filling: redraw fast, in any screen/mode, so it looks smooth.
         // - The info pager: nothing on it animates, so only user input should wake this loop.
-        // - A finished shift sitting idle: the dial is frozen and nothing else animates either,
-        //   so only user input (which dismisses it) should wake this loop.
         // - The shift is about to finish: force the same fast cadence the finish-check above
         //   needs, regardless of eco mode - otherwise an eco-frozen, idle shift only wakes up
         //   once a minute and the finish melody/state can land up to a minute late.
-        // - Everything else (Set mode included): the dial and the mascot's idle/working animation
-        //   both tick in real time, so redraw at 1Hz, unless eco mode has slowed things down after
-        //   a period of inactivity.
+        // - Everything else (Set mode and a finished shift included): the dial (or, once
+        //   finished, just the mascot's sleep animation - the dial itself stays frozen) ticks in
+        //   real time, so redraw at 1Hz, unless eco mode has slowed things down after a period of
+        //   inactivity.
         bool hold_in_progress = (app->ok_press_tick != 0 && !app->ok_hold_triggered) ||
                                 (app->back_press_tick != 0 && !app->back_hold_triggered);
         uint32_t frame_interval;
@@ -636,7 +638,7 @@ int32_t clock_main(void* p) {
         if(hold_in_progress) {
             frame_interval = HOLD_PROGRESS_FRAME_MS;
             queue_timeout = frame_interval;
-        } else if(app->screen == ScreenInfo || app->finish_sound_played) {
+        } else if(app->screen == ScreenInfo) {
             frame_interval = 0; // unused - queue_timeout never times out, so this never gets read
             queue_timeout = FuriWaitForever;
         } else if(finish_imminent) {

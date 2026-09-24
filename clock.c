@@ -106,6 +106,7 @@ void draw_timer(
     bool running,
     bool has_been_started,
     uint32_t now_wallclock_secs,
+    uint32_t animation_wallclock_secs,
     uint32_t start_wallclock_secs,
     const BreakLog* break_log,
     const UiOverlay* ui) {
@@ -283,12 +284,15 @@ void draw_timer(
 
     // Alternate frames once a second - draw callback already ticks at ~1Hz, so no separate
     // animation timer is needed. Eco mode freezes both on frame 1 after a minute of inactivity.
-    bool show_frame_2 = !ui->animations_frozen && (now_wallclock_secs % 2 != 0);
+    // Uses real time even when the dial itself is frozen (a finished shift), so the mascot still
+    // animates while the hand stays put.
+    bool show_frame_2 = !ui->animations_frozen && (animation_wallclock_secs % 2 != 0);
 
     // The croc's tail tip, flush against the face's own right edge with no gap - always visible.
-    // Asleep whenever it isn't actively working (Set mode or on a break); awake and animating
-    // only while working. Both states animate at the same 1Hz (eco-frozen to 1/min when idle).
-    bool is_sleeping = !has_been_started || is_break;
+    // Asleep whenever it isn't actively working (Set mode, on a break, or shift finished); awake
+    // and animating only while working. Both states animate at the same 1Hz (eco-frozen to 1/min
+    // when idle).
+    bool is_sleeping = !is_working;
     const Icon* croc_icon;
     if(is_sleeping) {
         croc_icon = show_frame_2 ? &I_sleep_2 : &I_sleep_1;
