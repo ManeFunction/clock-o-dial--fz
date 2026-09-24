@@ -18,8 +18,7 @@
 #define S_RAD   29
 #define HMS_OFS 8
 
-#define FACE_RADIUS        31
-#define FACE_DEFAULT_WIDTH 54
+#define FACE_RADIUS 31
 
 void draw_line(Canvas* c, uint8_t ofs_x, Line* l, LineType type) { // Bresenham-Algorithm
     int8_t x = l->start.x, y = l->start.y;
@@ -27,13 +26,10 @@ void draw_line(Canvas* c, uint8_t ofs_x, Line* l, LineType type) { // Bresenham-
     int8_t dy = -abs(l->end.y - y), sy = y < l->end.y ? 1 : -1;
     int8_t error = dx + dy, e2;
     while(true) {
-        if(type == Thick)
+        if(type == Thick) {
             canvas_draw_disc(c, ofs_x + x, OFS_Y - y, 1);
-        else {
+        } else {
             canvas_draw_dot(c, ofs_x + x, OFS_Y - y);
-            if(type & 1) canvas_draw_dot(c, ofs_x - x, OFS_Y - y); // copy hor or both
-            if(type & 2) canvas_draw_dot(c, ofs_x + x, OFS_Y + y); // copy ver or both
-            if(type == CopyBoth) canvas_draw_dot(c, ofs_x - x, OFS_Y + y);
         }
         if((x == l->end.x) && (y == l->end.y)) break;
         e2 = 2 * error;
@@ -76,58 +72,7 @@ void draw_hand(Canvas* canvas, uint8_t ofs_x, float ang, int radius, bool thick)
     }
 }
 
-// Finds where a ray at angle `ang` (from center, clockwise from top) exits the square face.
-static void square_intersect(float ang, uint8_t width, uint8_t height, float ofs, Point* out) {
-    float dir_x = sinf(ang);
-    float dir_y = cosf(ang);
-
-    float scale_x = (fabsf(dir_x) > 0.001f) ? (float)width / fabsf(dir_x) : width + height;
-    float scale_y = (fabsf(dir_y) > 0.001f) ? (float)height / fabsf(dir_y) : width + height;
-    float scale = (scale_x < scale_y) ? scale_x : scale_y;
-    scale -= ofs;
-    if(scale < 0) scale = 0;
-
-    float max_x = width - ofs;
-    float max_y = height - ofs;
-    float x = dir_x * scale;
-    float y = dir_y * scale;
-    if(x > max_x) x = max_x;
-    if(x < -max_x) x = -max_x;
-    if(y > max_y) y = max_y;
-    if(y < -max_y) y = -max_y;
-
-    out->x = (int8_t)roundf(x);
-    out->y = (int8_t)roundf(y);
-}
-
 void calc_clock_face(ClockFace* face) {
-    // Square face representing a real 12-hour clock (width = height = FACE_RADIUS)
-    uint8_t width = FACE_RADIUS;
-    uint8_t height = FACE_RADIUS;
-
-    float short_ofs = 2.0;
-    float long_ofs = 7.0;
-
-    float hour_angle_step = (float)M_TWOPI / (float)CLOCK_HOURS;
-    const uint8_t minor_ticks_per_hour = 4; // + the hour mark itself = 5 ticks/hour (every 5 min)
-    float minute_angle_step = hour_angle_step / (float)(minor_ticks_per_hour + 1);
-
-    uint8_t minute_mark_index = 0;
-    for(uint8_t hour = 0; hour < CLOCK_HOURS; hour++) {
-        float hour_ang = (float)hour * hour_angle_step;
-
-        square_intersect(hour_ang, width, height, 0, &face->hour_marks[hour].start);
-        square_intersect(hour_ang, width, height, long_ofs, &face->hour_marks[hour].end);
-
-        for(uint8_t m = 1; m <= minor_ticks_per_hour; m++) {
-            float min_ang = hour_ang + (float)m * minute_angle_step;
-            square_intersect(min_ang, width, height, 0, &face->minutes[minute_mark_index].start);
-            square_intersect(
-                min_ang, width, height, short_ofs, &face->minutes[minute_mark_index].end);
-            minute_mark_index++;
-        }
-    }
-
     // Precompute the worked-pattern's dither pixels and their dial angle once, so draw_timer
     // only has to check arc containment (no atan2f) on every one-second redraw.
     uint16_t fill_index = 0;
@@ -190,14 +135,14 @@ void draw_timer(
         // break gets carved out of it individually below, rather than showing one lumped gap.
         float history_start_angle = wallclock_angle(start_wallclock_secs);
         float history_length = (float)wallclock_span(start_wallclock_secs, now_wallclock_secs) /
-                                (12.0f * 3600.0f) * M_TWOPI_F;
+                               (12.0f * 3600.0f) * M_TWOPI_F;
 
         // Predicted segment: from now, for however much work remains at the current pace.
         // While on a break this starts sliding forward with real time, which pushes the
         // predicted finish time forward too.
-        uint32_t remaining_seconds =
-            timer_duration_seconds > elapsed_seconds ? timer_duration_seconds - elapsed_seconds :
-                                                        0;
+        uint32_t remaining_seconds = timer_duration_seconds > elapsed_seconds ?
+                                         timer_duration_seconds - elapsed_seconds :
+                                         0;
         float predicted_start_angle = hand_angle;
         float predicted_length = (float)remaining_seconds / (12.0f * 3600.0f) * M_TWOPI_F;
 
@@ -208,11 +153,10 @@ void draw_timer(
         for(uint8_t i = 0; i < break_log->count && break_angle_count < MAX_BREAKS + 1; i++) {
             break_start_angles[break_angle_count] =
                 wallclock_angle(break_log->items[i].start_wallclock_secs);
-            break_lengths[break_angle_count] =
-                (float)wallclock_span(
-                    break_log->items[i].start_wallclock_secs,
-                    break_log->items[i].end_wallclock_secs) /
-                (12.0f * 3600.0f) * M_TWOPI_F;
+            break_lengths[break_angle_count] = (float)wallclock_span(
+                                                   break_log->items[i].start_wallclock_secs,
+                                                   break_log->items[i].end_wallclock_secs) /
+                                               (12.0f * 3600.0f) * M_TWOPI_F;
             break_angle_count++;
         }
         if(break_log->live_active && break_angle_count < MAX_BREAKS + 1) {
@@ -250,20 +194,12 @@ void draw_timer(
         }
     }
 
-    // Draw minute marks (short ticks)
-    for(uint8_t i = 0; i < CLOCK_HOURS * 4; i++) {
-        draw_line(canvas, OFS_LEFT_X, &face->minutes[i], Normal);
-    }
-
-    // Draw hour marks (long ticks)
-    for(uint8_t i = 0; i < CLOCK_HOURS; i++) {
-        draw_line(canvas, OFS_LEFT_X, &face->hour_marks[i], Normal);
-    }
-
-    // Draw the single hand - always real time, never removed or duplicated
+    // Main draw calls: hand, disc, frame, etc.
     draw_hand(canvas, OFS_LEFT_X, hand_angle, M_RAD, true);
-
     canvas_draw_disc(canvas, OFS_LEFT_X, OFS_Y, 2);
+    canvas_set_bitmap_mode(canvas, true);
+    canvas_draw_icon(canvas, 0, 0, &I_frame);
+    canvas_set_bitmap_mode(canvas, false);
 
     // Draw digital timer and status on right side
     uint32_t total_elapsed_ms = elapsed_seconds * 1000 + ms;
@@ -353,12 +289,26 @@ void draw_timer(
         canvas_draw_str_aligned(canvas, OFS_RIGHT_X, OFS_Y + 8, AlignCenter, AlignCenter, status);
     }
 
-    // Both animations share a bottom edge regardless of their frame heights
-    int32_t icon_bottom_y = OFS_Y + 15 + icon_get_height(&I_coffee_1);
+    // Everything on this bottom row - the croc tail and the working/break icon - shares the
+    // screen's own bottom edge regardless of each sprite's own height.
+    int32_t icon_bottom_y = 64;
 
     // Alternate frames once a second - draw callback already ticks at ~1Hz, so no separate
     // animation timer is needed. Eco mode freezes both on frame 1 after a minute of inactivity.
     bool show_frame_2 = !ui->animations_frozen && (now_wallclock_secs % 2 != 0);
+
+    // The croc's tail tip, flush against the face's own right edge with no gap - always visible.
+    // Asleep whenever it isn't actively working (Set mode or on a break); awake and animating
+    // only while working. Both states animate at the same 1Hz (eco-frozen to 1/min when idle).
+    bool is_sleeping = !has_been_started || is_break;
+    const Icon* croc_icon;
+    if(is_sleeping) {
+        croc_icon = show_frame_2 ? &I_sleep_2 : &I_sleep_1;
+    } else {
+        croc_icon = show_frame_2 ? &I_croc_2 : &I_croc_1;
+    }
+    int32_t croc_x = icon_get_width(&I_frame);
+    canvas_draw_icon(canvas, croc_x, icon_bottom_y - icon_get_height(croc_icon), croc_icon);
 
     const Icon* status_icon = NULL;
     if(is_working) {
@@ -367,11 +317,12 @@ void draw_timer(
         status_icon = show_frame_2 ? &I_coffee_2 : &I_coffee_1;
     }
     if(status_icon != NULL) {
+        // 4px gap to the right of whichever croc/sleep sprite is currently showing - measured
+        // off its actual width so the gap stays consistent even though the sleeping sprite is
+        // narrower than the awake one.
+        int32_t status_icon_x = croc_x + icon_get_width(croc_icon) + 4;
         canvas_draw_icon(
-            canvas,
-            OFS_RIGHT_X - icon_get_width(status_icon) / 2,
-            icon_bottom_y - icon_get_height(status_icon),
-            status_icon);
+            canvas, status_icon_x, icon_bottom_y - icon_get_height(status_icon), status_icon);
     }
 
     // Sound, eco, backlight, and vibro all share one top-right slot; only one of the four is
@@ -407,36 +358,67 @@ void draw_timer(
     }
 
     if(ui->hold_active) {
-        // Overlay the bottom-right quadrant with a hold-to-confirm progress bar
         float frac = ui->hold_fraction;
         if(frac < 0.0f) frac = 0.0f;
         if(frac > 1.0f) frac = 1.0f;
         float eased = 0.5f * (1.0f - cosf(frac * (float)M_PI)); // ease-in-out sine
 
-        const uint8_t bar_y = 62;
-        const uint8_t bar_margin = 2;
-        int32_t bar_x0 = OFS_MID_X + 1 + bar_margin;
+        // Working/break (RESETTING, or CLOSING while working): reuse the status-text row and
+        // stay tight below it, clear of the mascot animation at the bottom of the screen. Set
+        // mode (INFO, or CLOSING there) instead reuses the "Set shift" title's row, with the bar
+        // above it near the top edge, clear of both the time readout/arrows in the middle and
+        // the sleep animation at the bottom. The label-to-bar gap is the same 7px (from the
+        // label's center) in both layouts, just mirrored top-to-bottom.
+        const int32_t bar_height = 2;
+        // The box and the bar both start right past the face sprite's own right edge (never a
+        // pixel sooner), so neither can ever cut into it - the box additionally needs no further
+        // gap since it's just erasing, while the bar gets a few extra px of breathing room.
+        const int32_t frame_right = icon_get_width(&I_frame);
+        const int32_t bar_margin = 4;
+        int32_t label_y, bar_y, box_y0, box_y1;
+        if(has_been_started) {
+            label_y = OFS_Y + 8; // same row the "Working"/"Break" status text uses
+            bar_y = label_y + 7;
+            box_y0 = label_y - 6;
+            box_y1 = bar_y + bar_height + 1;
+        } else {
+            label_y = 17; // same row the "Set shift" title uses
+            bar_y = label_y - 7 - bar_height;
+            box_y0 = bar_y - 2;
+            box_y1 = label_y + 6;
+        }
+        int32_t bar_x0 = frame_right + bar_margin;
         int32_t bar_x1 = 128 - bar_margin;
         int32_t bar_width = bar_x1 - bar_x0;
 
         canvas_set_color(canvas, ColorWhite);
-        canvas_draw_box(canvas, OFS_MID_X + 1, 44, 128 - (OFS_MID_X + 1), 64 - 44);
+        canvas_draw_box(canvas, frame_right, box_y0, 128 - frame_right, box_y1 - box_y0);
         canvas_set_color(canvas, ColorBlack);
 
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str_aligned(
-            canvas, OFS_RIGHT_X, bar_y - 8, AlignCenter, AlignCenter, ui->hold_label);
-        canvas_draw_box(canvas, bar_x0, bar_y, (int32_t)(bar_width * eased), 2);
+            canvas, OFS_RIGHT_X, label_y, AlignCenter, AlignCenter, ui->hold_label);
+        canvas_draw_box(canvas, bar_x0, bar_y, (int32_t)(bar_width * eased), bar_height);
     } else if(ui->break_limit_message) {
-        // Same bottom-right overlay box as the hold progress bar, just a plain two-line message
-        // instead - shown briefly after a break is dropped for hitting MAX_BREAKS.
+        // Same idea as the hold overlay above: reuse the status-text row, so this sits between
+        // the time readout and the mascot animation, and never cuts into the face sprite's edge.
+        const int32_t frame_right = icon_get_width(&I_frame);
+        // A couple px lower than the status text's own row and with tighter padding, so the
+        // block clears the time readout above it instead of just touching it.
+        const int32_t label_y = OFS_Y + 10;
+        const int32_t line_gap = 8;
+        const int32_t line1_y = label_y - line_gap / 2;
+        const int32_t line2_y = label_y + line_gap / 2;
+        const int32_t box_y0 = line1_y - 4;
+        const int32_t box_y1 = line2_y + 4;
+
         canvas_set_color(canvas, ColorWhite);
-        canvas_draw_box(canvas, OFS_MID_X + 1, 44, 128 - (OFS_MID_X + 1), 64 - 44);
+        canvas_draw_box(canvas, frame_right, box_y0, 128 - frame_right, box_y1 - box_y0);
         canvas_set_color(canvas, ColorBlack);
 
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, 50, AlignCenter, AlignCenter, "Too many");
-        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, 58, AlignCenter, AlignCenter, "breaks!");
+        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, line1_y, AlignCenter, AlignCenter, "Too many");
+        canvas_draw_str_aligned(canvas, OFS_RIGHT_X, line2_y, AlignCenter, AlignCenter, "breaks!");
     }
 }
 
