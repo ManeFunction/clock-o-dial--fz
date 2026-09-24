@@ -867,25 +867,33 @@ int32_t clock_main(void* p) {
                                 // Timer finished: reset to Shift mode
                                 reset_to_shift_mode(app);
                             } else if(app->running) {
-                                // Stop timer - accumulate elapsed time including milliseconds
-                                uint32_t elapsed_ms = now_tick - app->start_tick;
-                                app->running = false;
-
-                                if(app->pause_start_tick != 0 && elapsed_ms < BREAK_FOLD_MS) {
-                                    // Too little work happened since the last break to credit as
-                                    // work, same threshold as folding a break. The anchor still
-                                    // moves to now, though: the break before this sliver was
-                                    // already folded/logged at the resume that started it, so
-                                    // leaving the anchor behind would re-span and double-count
-                                    // that already-committed time on the next resume.
-                                    app->pause_start_tick = now_tick;
-                                    app->pause_start_wallclock = rtc_now_seconds();
+                                if(app->break_count >= MAX_BREAKS) {
+                                    // Every break slot is already used - refuse to start another
+                                    // one (keep running) and say so, rather than letting the
+                                    // break happen and only discovering the cap when it ends.
+                                    app->break_limit_message_tick = now_tick;
                                 } else {
-                                    app->elapsed_seconds += (elapsed_ms / 1000);
-                                    app->ms_adjust =
-                                        elapsed_ms % 1000; // Store remaining milliseconds
-                                    app->pause_start_tick = now_tick;
-                                    app->pause_start_wallclock = rtc_now_seconds();
+                                    // Stop timer - accumulate elapsed time including milliseconds
+                                    uint32_t elapsed_ms = now_tick - app->start_tick;
+                                    app->running = false;
+
+                                    if(app->pause_start_tick != 0 && elapsed_ms < BREAK_FOLD_MS) {
+                                        // Too little work happened since the last break to credit
+                                        // as work, same threshold as folding a break. The anchor
+                                        // still moves to now, though: the break before this sliver
+                                        // was already folded/logged at the resume that started it,
+                                        // so leaving the anchor behind would re-span and
+                                        // double-count that already-committed time on the next
+                                        // resume.
+                                        app->pause_start_tick = now_tick;
+                                        app->pause_start_wallclock = rtc_now_seconds();
+                                    } else {
+                                        app->elapsed_seconds += (elapsed_ms / 1000);
+                                        app->ms_adjust =
+                                            elapsed_ms % 1000; // Store remaining milliseconds
+                                        app->pause_start_tick = now_tick;
+                                        app->pause_start_wallclock = rtc_now_seconds();
+                                    }
                                 }
                             } else {
                                 bool is_resume = app->has_been_started;
@@ -896,23 +904,21 @@ int32_t clock_main(void* p) {
                                 } else {
                                     // Breaks under a minute aren't worth logging - fold them
                                     // straight into worked time instead. Longer ones get logged
-                                    // with their real start/end so the dial can show them.
+                                    // with their real start/end so the dial can show them. The
+                                    // break cap is enforced when a break starts (above), so there
+                                    // is always room left to log one that's actually in progress.
                                     uint32_t break_ms = now_tick - app->pause_start_tick;
                                     if(break_ms < BREAK_FOLD_MS) {
                                         uint32_t ms_total = app->ms_adjust + (break_ms % 1000);
                                         app->elapsed_seconds +=
                                             break_ms / 1000 + ms_total / 1000;
                                         app->ms_adjust = ms_total % 1000;
-                                    } else if(app->break_count < MAX_BREAKS) {
+                                    } else {
                                         app->breaks[app->break_count].start_wallclock_secs =
                                             app->pause_start_wallclock;
                                         app->breaks[app->break_count].end_wallclock_secs =
                                             rtc_now_seconds();
                                         app->break_count++;
-                                    } else {
-                                        // Already at MAX_BREAKS - this break isn't logged or
-                                        // folded into worked time, just silently dropped. Say so.
-                                        app->break_limit_message_tick = now_tick;
                                     }
                                 }
                                 // Start timer - adjust start_tick to account for stored milliseconds

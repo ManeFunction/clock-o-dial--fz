@@ -97,7 +97,7 @@ typedef struct {
     bool hold_active; // a qualifying reset/close hold is in progress, past HOLD_SHOW_MS
     float hold_fraction; // 0..1 linear progress toward HOLD_CONFIRM_MS (eased at draw time)
     const char* hold_label; // "RESETTING" or "CLOSING"
-    bool break_limit_message; // a break was just dropped for hitting MAX_BREAKS - say so briefly
+    bool break_limit_message; // a break couldn't start because MAX_BREAKS is used up - say so
 } UiOverlay;
 
 // A single completed break, logged only once it's run at least BREAK_FOLD_MS.
