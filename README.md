@@ -37,7 +37,7 @@ Hourly chimes, vibro, always-on backlight (everything is optional), **highly opt
 ## About the optimization
 
 As an app made to run at least a third of the day, it is highly optimized, buffering every heavy calculation needed for rendering.
-Rendering runs at one screen refresh per second when animation is active, or one refresh per minute in eco mode.
+Rendering runs at one screen refresh per second when animation is active, or two refreshes per minute in eco mode.
 
 My personal tests show it runs on my Flipper Zero with very little overhead.
 Here are some battery drain stats for a **9-hour** time period:
