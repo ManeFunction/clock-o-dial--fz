@@ -543,12 +543,21 @@ int32_t clock_main(void* p) {
         // Also read below, once mutex-free, to keep eco mode from delaying the finish check (and
         // its melody) by sleeping through the last minute of the shift - see its use further down.
         bool finish_imminent = false;
+        // Only meaningful while running: ms until the digital label's displayed minute next
+        // changes - lets eco mode wake exactly then instead of on a fixed interval that drifts
+        // out of phase with it. See its use further down.
+        uint32_t ms_to_next_minute = ECO_FRAME_MS;
 
         if(furi_mutex_acquire(app->mutex, 0) == FuriStatusOk) {
             if(app->has_been_started && app->running && !app->finish_sound_played) {
                 uint32_t timer_duration_seconds = app->cfg.timer_duration_hours * 3600;
                 uint32_t elapsed_ms = current_tick - app->start_tick;
                 uint32_t elapsed_seconds = app->elapsed_seconds + (elapsed_ms / 1000);
+                uint32_t total_elapsed_ms = app->elapsed_seconds * 1000 + elapsed_ms;
+                // +1: landing exactly on the minute boundary isn't enough - the displayed minute
+                // (floor of remaining seconds) only reflects the change once elapsed is strictly
+                // past it, otherwise this also undershoots into a full extra 60s wait next time.
+                ms_to_next_minute = 60001 - (total_elapsed_ms % 60000);
                 uint32_t remaining = timer_duration_seconds > elapsed_seconds ?
                                          timer_duration_seconds - elapsed_seconds :
                                          0;
@@ -647,7 +656,14 @@ int32_t clock_main(void* p) {
         } else {
             bool eco_frozen = app->cfg.eco_mode_enabled &&
                               (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
-            frame_interval = eco_frozen ? ECO_FRAME_MS : FRAME_MS_RUNNING;
+            if(eco_frozen && app->running) {
+                // Once frozen, the displayed minutes digit is all that's still live (long format
+                // dashes out the seconds, short format never had them) - wake right as it changes
+                // instead of on a fixed 60s cadence that could land anywhere within that minute.
+                frame_interval = ms_to_next_minute;
+            } else {
+                frame_interval = eco_frozen ? ECO_FRAME_MS : FRAME_MS_RUNNING;
+            }
             queue_timeout = frame_interval;
         }
 
