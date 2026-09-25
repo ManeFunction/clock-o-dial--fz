@@ -283,10 +283,12 @@ void draw_timer(
     int32_t icon_bottom_y = 64;
 
     // Alternate frames once a second - draw callback already ticks at ~1Hz, so no separate
-    // animation timer is needed. Eco mode freezes both on frame 1 after a minute of inactivity.
-    // Uses real time even when the dial itself is frozen (a finished shift), so the mascot still
-    // animates while the hand stays put.
-    bool show_frame_2 = !ui->animations_frozen && (animation_wallclock_secs % 2 != 0);
+    // animation timer is needed. Uses real time even when the dial itself is frozen (a finished
+    // shift), so the mascot still animates while the hand stays put. Once eco mode freezes things
+    // after a minute of inactivity, that 1Hz alternation stops - instead the frame blips to 2 for
+    // one second right as each real-time minute ticks over, then holds frame 1 until the next.
+    bool show_frame_2 = ui->animations_frozen ? ui->eco_blip_active :
+                                                 (animation_wallclock_secs % 2 != 0);
 
     // The croc's tail tip, flush against the face's own right edge with no gap - always visible.
     // Asleep whenever it isn't actively working (Set mode, on a break, or shift finished); awake

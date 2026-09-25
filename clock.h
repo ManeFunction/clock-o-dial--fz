@@ -94,6 +94,7 @@ typedef struct {
     bool long_time_format;
     TopRightIconSlot top_right_icon_slot;
     bool animations_frozen; // eco mode has kicked in after a minute idle - hold frame 1/dashed secs
+    bool eco_blip_active; // frozen only: real-time minute just ticked over - show frame 2 for 1s
     bool hold_active; // a qualifying reset/close hold is in progress, past HOLD_SHOW_MS
     float hold_fraction; // 0..1 linear progress toward HOLD_CONFIRM_MS (eased at draw time)
     const char* hold_label; // "RESETTING" or "CLOSING"

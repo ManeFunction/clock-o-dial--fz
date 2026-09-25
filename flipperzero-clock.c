@@ -262,6 +262,17 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
 
     bool eco_frozen = app->cfg.eco_mode_enabled &&
                       (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
+    uint32_t real_now_wallclock_secs = rtc_now_seconds();
+
+    // Blips for the first second after the label's own minute last changed, so the animation
+    // never visibly desyncs from it. Working has a live shift clock to sync to; everything else
+    // (Set mode's static duration, a break's frozen countdown, a finished shift's frozen dial)
+    // doesn't, so it falls back to a real-time once-a-minute "still alive" tick instead.
+    // ms_into_minute == 0 means sitting exactly on the boundary but not yet past it (the label
+    // itself hasn't flipped there either - see ms_to_next_minute), so it's excluded here too.
+    uint32_t shift_ms_into_minute = (elapsed_seconds * 1000 + ms) % 60000;
+    bool blip_active = app->running ? (shift_ms_into_minute >= 1 && shift_ms_into_minute < 1000) :
+                                       (real_now_wallclock_secs % 60 == 0);
 
     UiOverlay ui = {
         .sound_enabled = app->cfg.sound_enabled,
@@ -271,6 +282,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         .long_time_format = app->cfg.long_time_format,
         .top_right_icon_slot = current_top_right_icon_slot(app, current_tick),
         .animations_frozen = eco_frozen,
+        .eco_blip_active = eco_frozen && blip_active,
         .hold_active = false,
         .hold_fraction = 0.0f,
         .hold_label = NULL,
@@ -283,7 +295,6 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
     // moment finish was detected, rather than letting it keep drifting with real time while the
     // user looks the completed shift over. Any button dismisses it back to Set mode. The mascot's
     // sleep animation still needs real time, though, so it's handed the live clock separately.
-    uint32_t real_now_wallclock_secs = rtc_now_seconds();
     uint32_t now_wallclock_secs =
         app->finish_sound_played ? app->finish_wallclock_secs : real_now_wallclock_secs;
 
@@ -543,9 +554,11 @@ int32_t clock_main(void* p) {
         // Also read below, once mutex-free, to keep eco mode from delaying the finish check (and
         // its melody) by sleeping through the last minute of the shift - see its use further down.
         bool finish_imminent = false;
-        // Only meaningful while running: ms until the digital label's displayed minute next
-        // changes - lets eco mode wake exactly then instead of on a fixed interval that drifts
-        // out of phase with it. See its use further down.
+        // Only meaningful while running: ms until the next thing tied to the digital label's own
+        // minute clock needs a redraw - either the label's displayed minute changing, or the
+        // animation blip (synced to that same event, see eco_blip_active) closing back to frame 1
+        // a second later. Lets eco mode wake exactly then instead of on a fixed interval that
+        // drifts out of phase with it. See its use further down.
         uint32_t ms_to_next_minute = ECO_FRAME_MS;
 
         if(furi_mutex_acquire(app->mutex, 0) == FuriStatusOk) {
@@ -554,10 +567,20 @@ int32_t clock_main(void* p) {
                 uint32_t elapsed_ms = current_tick - app->start_tick;
                 uint32_t elapsed_seconds = app->elapsed_seconds + (elapsed_ms / 1000);
                 uint32_t total_elapsed_ms = app->elapsed_seconds * 1000 + elapsed_ms;
-                // +1: landing exactly on the minute boundary isn't enough - the displayed minute
-                // (floor of remaining seconds) only reflects the change once elapsed is strictly
-                // past it, otherwise this also undershoots into a full extra 60s wait next time.
-                ms_to_next_minute = 60001 - (total_elapsed_ms % 60000);
+                uint32_t ms_into_minute = total_elapsed_ms % 60000;
+                // The label (and the blip, synced to it) only actually flips once elapsed is
+                // strictly past a multiple of 60000 - landing exactly on it (ms_into_minute == 0)
+                // still shows the old value, so that case needs only 1ms more, not a fresh 60s
+                // wait. Once flipped, ms_into_minute is 1..999 while the blip window is still
+                // open; wake when it closes rather than waiting a full minute for the next label
+                // change.
+                if(ms_into_minute == 0) {
+                    ms_to_next_minute = 1;
+                } else if(ms_into_minute < 1000) {
+                    ms_to_next_minute = 1000 - ms_into_minute;
+                } else {
+                    ms_to_next_minute = 60001 - ms_into_minute;
+                }
                 uint32_t remaining = timer_duration_seconds > elapsed_seconds ?
                                          timer_duration_seconds - elapsed_seconds :
                                          0;
@@ -639,7 +662,8 @@ int32_t clock_main(void* p) {
         // - Everything else (Set mode and a finished shift included): the dial (or, once
         //   finished, just the mascot's sleep animation - the dial itself stays frozen) ticks in
         //   real time, so redraw at 1Hz, unless eco mode has slowed things down after a period of
-        //   inactivity.
+        //   inactivity - in which case it instead wakes right when something frozen is about to
+        //   visibly change (the countdown's minute digit, and/or the once-a-minute animation blip).
         bool hold_in_progress = (app->ok_press_tick != 0 && !app->ok_hold_triggered) ||
                                 (app->back_press_tick != 0 && !app->back_hold_triggered);
         uint32_t frame_interval;
@@ -656,13 +680,24 @@ int32_t clock_main(void* p) {
         } else {
             bool eco_frozen = app->cfg.eco_mode_enabled &&
                               (current_tick - app->last_activity_tick) >= ECO_IDLE_MS;
-            if(eco_frozen && app->running) {
-                // Once frozen, the displayed minutes digit is all that's still live (long format
-                // dashes out the seconds, short format never had them) - wake right as it changes
-                // instead of on a fixed 60s cadence that could land anywhere within that minute.
-                frame_interval = ms_to_next_minute;
+            if(eco_frozen) {
+                if(app->running) {
+                    // ms_to_next_minute already covers both events tied to the label's own
+                    // minute clock: the digit changing, and the blip (synced to it) closing a
+                    // second later - so the animation never drifts out of phase with the label.
+                    frame_interval = ms_to_next_minute;
+                } else {
+                    // Nothing here has a shift-elapsed clock to sync to (Set mode's duration is
+                    // static, a break's countdown is frozen, a finished shift's dial is frozen) -
+                    // the blip instead runs on real wall-clock time as an ambient "still alive"
+                    // tick. rtc_now_seconds() only has 1s resolution, so this can land up to ~1s
+                    // early - harmless here, unlike the countdown digit, since it just costs one
+                    // extra recheck rather than showing a wrong value.
+                    uint32_t sec_in_minute = rtc_now_seconds() % 60;
+                    frame_interval = sec_in_minute == 0 ? 1000 : (60 - sec_in_minute) * 1000;
+                }
             } else {
-                frame_interval = eco_frozen ? ECO_FRAME_MS : FRAME_MS_RUNNING;
+                frame_interval = FRAME_MS_RUNNING;
             }
             queue_timeout = frame_interval;
         }
