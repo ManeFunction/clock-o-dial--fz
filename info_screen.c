@@ -148,7 +148,7 @@ static void draw_about_page(Canvas* canvas) {
     const int32_t qr_h = icon_get_height(&I_qrcode);
     const int32_t top = page_content_top(canvas);
     // Same gap above (to the subtitle) and below (to the screen edge).
-    const int32_t qr_y = top + (64 - top - qr_h) / 2;
+    const int32_t qr_y = top + (64 - top - qr_h) / 2 + 1;
     canvas_draw_icon(canvas, left_edge, qr_y, &I_qrcode);
 
     const int32_t text_x = left_edge + qr_w + side_gap + 2; // whole text block nudged right
