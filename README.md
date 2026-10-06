@@ -6,6 +6,7 @@ A Flipper Zero app that turns the device into a work-shift and overtime timer fo
 Built for Flipper Zero to reduce distraction and not to draw attention to your phone.
 
 ![](https://raw.githubusercontent.com/wiki/ManeFunction/clock-o-dial--fz/screenshot-1.png) ![](https://raw.githubusercontent.com/wiki/ManeFunction/clock-o-dial--fz/screenshot-2.png)
+
 ![](https://raw.githubusercontent.com/wiki/ManeFunction/clock-o-dial--fz/screenshot-3.png) ![](https://raw.githubusercontent.com/wiki/ManeFunction/clock-o-dial--fz/screenshot-4.png)
 
 ## Features
