@@ -64,13 +64,11 @@ jobs:
           PREV_TAG=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
 
           {
-            python3 .github/scripts/changelog_section.py "${{ needs.build.outputs.version }}"
-            echo ""
             echo "Built against the Release firmware SDK (\`${{ needs.build.outputs.suffix }}\`)."
             echo ""
             gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
               -f tag_name="$GITHUB_REF_NAME" --jq .body
-            # On the first release the whole pre-release history would be listed; changelog.md says it better.
+            # The first release has no previous tag to diff against.
             if [ -n "$PREV_TAG" ]; then
               echo ""
               python3 .github/scripts/categorize_changelog.py "$PREV_TAG..$GITHUB_REF_NAME"
